@@ -230,6 +230,7 @@ internal static class UiSmoke
             Check(app.LatencyTrend.Count == app.History.Count && app.LatencyTrend.Any(v => v is not null), "trend exposes the recorded samples", checks);
             Check(app.TrendSpan == "—" || app.TrendSpan.EndsWith(" s"), "trend reports a time span once it spans one", checks);
             checks.Add("monitor health badge, headline tiles and trend wiring verified");
+            RenderTrend(checks, directory);
             checks.Add("eight pages rendered in light/dark; panel at 100/125/150/175/200 percent");
             await app.StopAsync(); await Until(() => app.Snapshot.State == PlaybackState.Idle);
             settings.Hide(); panel.ShowPanel(); await Pump();
@@ -246,6 +247,43 @@ internal static class UiSmoke
         }
         catch (Exception error) { App.WriteOutput(args, new { ok = false, checks, error = error.ToString() }); return 1; }
         finally { settings?.Close(); panel.ShutdownPanel(); }
+    }
+    /// <summary>
+    /// Render the trend chart with a synthetic series.
+    ///
+    /// The live fixture only records one sample per second, so the plot would
+    /// never show a line in a short run. This renders the control directly from a
+    /// known series to prove the geometry is produced, including a deliberate gap.
+    /// </summary>
+    private static void RenderTrend(List<string> checks, string directory)
+    {
+        var history = new MonitorHistory();
+        for (var i = 0; i < 40; i++)
+        {
+            if (i is 18 or 19) { history.Add(new MonitorSample(i, null, null, null, null)); continue; }
+            history.Add(new MonitorSample(i, 150 + Math.Sin(i / 4.0) * 12 + (i > 25 ? i : 0), 4.2, 10.8, i % 7));
+        }
+        var host = new Grid { Background = (Brush)Application.Current.Resources["CanvasBrush"], Width = 520, Height = 260 };
+        host.Children.Add(new TextBlock { Text = "Latency", Margin = new Thickness(16, 12, 0, 0), Foreground = (Brush)Application.Current.Resources["MutedBrush"], FontSize = 11 });
+        host.Children.Add(new Sparkline
+        {
+            Values = history.Values(MonitorSeries.Latency),
+            Baseline = 200,
+            Stroke = (Brush)Application.Current.Resources["AccentBrush"],
+            Margin = new Thickness(16, 34, 16, 16),
+        });
+        var window = new Window { Content = host, Width = 540, Height = 300, WindowStyle = WindowStyle.None, ShowInTaskbar = false };
+        try
+        {
+            window.Show();
+            host.UpdateLayout();
+            Check(host.ActualWidth > 0 && host.ActualHeight > 0, "trend chart renders a measurable surface", checks);
+            Render(window, Path.Combine(directory, "monitor-trend-render.png"), 1);
+            var values = history.Values(MonitorSeries.Latency);
+            Check(values.Count == 40 && values.Count(v => v is null) == 2, "trend series keeps deliberate gaps", checks);
+            checks.Add("trend chart rendered from a synthetic series with gaps");
+        }
+        finally { window.Close(); }
     }
     private static async Task VerifyStartupFailureAsync(List<string> checks, string directory)
     {
