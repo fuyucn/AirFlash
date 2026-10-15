@@ -1,0 +1,83 @@
+name: Build preview
+
+# Manual packaging from any branch. The Release workflow only runs on main or the
+# preview branch, so this provides a downloadable portable build for review.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp into the build, for example 0.4.1'
+        type: string
+        required: true
+        default: '0.4.1'
+      preview:
+        description: 'Mark the build as a preview (adds -rc.1 to the informational version)'
+        type: boolean
+        required: false
+        default: true
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - name: Native checks and build
+        shell: pwsh
+        run: ./scripts/build-native.ps1 -Check
+      - name: Stamp version
+        id: stamp
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.version }}'
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "version must be X.Y.Z, got '$version'" }
+          $informational = if ('${{ inputs.preview }}' -eq 'true') { "$version-rc.1" } else { $version }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "informational=$informational" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Publish portable executable
+        shell: pwsh
+        run: |
+          # RestoreLockedMode is intentionally omitted: the packages lock file pins the
+          # SDK-bundled Microsoft.NET.ILLink.Tasks version, so a runner whose SDK band
+          # differs from the one that produced the lock file would fail restore. This
+          # job only packages an artifact and never commits, so a re-evaluated lock is
+          # harmless. The Release workflow keeps locked restore for published builds.
+          ./scripts/dotnet.ps1 publish AirFlash.App/AirFlash.App.csproj -c Release -r win-x64 --self-contained true `
+            '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:PublishTrimmed=false' '-p:EnableCompressionInSingleFile=true' `
+            '-p:DebugType=None' '-p:DebugSymbols=false' `
+            '-p:Version=${{ steps.stamp.outputs.version }}' `
+            '-p:InformationalVersion=${{ steps.stamp.outputs.informational }}' `
+            '-p:FileVersion=${{ steps.stamp.outputs.version }}.0' `
+            '-p:AssemblyVersion=${{ steps.stamp.outputs.version }}.0' `
+            -o (Join-Path (Get-Location).Path 'artifacts/preview-publish')
+      - name: Verify packaged startup and compatibility
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path artifacts/preview-publish/AirFlash.exe).Path
+          foreach ($check in @('self-check', 'compat-check')) {
+            $report = [IO.Path]::GetFullPath("artifacts/compatibility/$check.json")
+            $process = Start-Process -FilePath $exe -ArgumentList @("--$check", '--output', ('"' + $report + '"')) -PassThru -WindowStyle Hidden
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw "$check timed out" }
+            if ($process.ExitCode -ne 0 -or -not (Get-Content $report -Raw | ConvertFrom-Json).ok) { throw "$check failed" }
+          }
+      - name: Record checksum
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path artifacts/preview-publish/AirFlash.exe).Path
+          $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  AirFlash.exe" | Set-Content -LiteralPath artifacts/preview-publish/SHA256SUMS.txt -Encoding ascii
+          Get-Content artifacts/preview-publish/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AirFlash-${{ steps.stamp.outputs.informational }}-win-x64
+          path: |
+            artifacts/preview-publish/AirFlash.exe
+            artifacts/preview-publish/SHA256SUMS.txt
+          retention-days: 30
