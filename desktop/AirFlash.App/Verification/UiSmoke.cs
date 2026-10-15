@@ -216,7 +216,9 @@ internal static class UiSmoke
             Check(app.MonitorReceiverLatency.Contains("150") && app.MonitorReceiverLatencyRequested, "monitor labels an unreported receiver buffer as requested", checks);
             Check(app.MonitorLocalDelay == "10.8 ms", "monitor shows the measured local capture delay", checks);
             Check(app.MonitorNetworkRtt == "4.2 ms", "monitor shows the measured feedback round trip", checks);
-            Check(app.MonitorEstimatedLatency.Contains("163") && app.MonitorEstimatedLatency.Contains("buffer 150") && app.MonitorEstimatedLatency.Contains("capture 11") && app.MonitorEstimatedLatency.Contains("network 2"), "monitor estimate sums the observed parts", checks);
+            // Assert on the numbers, not the localized words around them: 150 buffer
+            // + 10.8 capture + 2.1 half round trip.
+            Check(app.MonitorEstimatedValue == "163" && app.MonitorEstimatedLatency.Contains("150") && app.MonitorEstimatedLatency.Contains("11") && app.MonitorEstimatedLatency.Contains("2"), "monitor estimate sums the observed parts", checks);
             // The fixture reports one send error, so loss is present and the badge must say so.
             Check(app.Health.Level == HealthLevel.Degraded, "monitor grades observed loss as degraded", checks);
             Check(app.HealthLabel == L.Get("Degraded") && app.HealthReason.Length > 0, "health badge pairs a label with its reason", checks);
