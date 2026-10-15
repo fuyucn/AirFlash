@@ -559,6 +559,8 @@ public sealed class TransportMemberViewModel(MemberTransportMetrics metrics) : O
         L.Format("Packets sent: {0}; send errors: {1}; sync errors: {2}", Count(Metrics.PacketsSent), Count(Metrics.SendErrors), Count(Metrics.SyncErrors)),
         L.Format("Retransmission requests: {0}; packets resent: {1}", Count(Metrics.RetransmitRequests), Count(Metrics.RetransmitsSent)),
         L.Format("Not cached: {0}; expired: {1}; queue drops: {2}; resend errors: {3}", Count(Metrics.RetransmitMissing), Count(Metrics.RetransmitExpired), Count(Metrics.RetransmitQueueDrops), Count(Metrics.RetransmitSendErrors)),
+        L.Format("Send backpressure: {0}; dropped backlog: {1}", Count(Metrics.Backlogged), Count(Metrics.Dropped)),
+        L.Format("Sender backlog: {0} of {1} packets ({2} bytes); send buffer: {3} bytes", Count(Metrics.BacklogPackets), Count(Metrics.BacklogLimitPackets), Count(Metrics.BacklogBytes), Count(Metrics.AudioSendBufferBytes)),
         L.Format("Feedback: {0}; last successful response: {1}; failures: {2}", Metrics.FeedbackDelayed == true ? L.Get("Delayed") : Metrics.FeedbackRttMs is not null ? L.Get("Responding") : "—", Metrics.FeedbackRttMs is { } ms ? $"{ms:F1} ms" : "—", Count(Metrics.FeedbackFailures)),
         L.Format("Receiver delay parameter: {0} ({1})", Metrics.ReceiverLatencyMs is { } latency ? $"{latency:F1} ms" : "—", Metrics.ReceiverLatencyEstimated is { } estimated ? estimated ? L.Get("Requested value") : L.Get("Receiver-reported value") : "—")
     });

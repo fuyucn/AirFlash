@@ -611,6 +611,9 @@ pub fn probe_with_controls(
             let skipped = schedule.recover(now, options.duration_ms == 0)?;
             if skipped > 0 {
                 for member in &mut members {
+                    // Audio queued before the stall is older than the recovered
+                    // timeline; sending it would only add unusable latency.
+                    member.media.abandon_backlog();
                     member.media.packetizer.skip_packets(skipped);
                 }
                 if let Some(source) = &live {

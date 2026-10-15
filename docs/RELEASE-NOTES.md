@@ -19,13 +19,14 @@ Changes since AirFlash 0.3.0.
 - Keep Settings content clear of overlaid scrollbars. Mouse-wheel input over equalizer bands scrolls the page without changing band gains.
 - Render control-panel icons with vector geometry so playback controls do not depend on installed symbol fonts.
 - Keep the control panel, tray, and Settings available if the audio engine fails to initialize, with a retry action and diagnostics. Log early startup and engine launch failures, and report discovery, audio endpoint, and autostart initialization errors without blocking the shell.
+- Absorb transient local UDP send-path backpressure instead of discarding audio. The engine now keeps a bounded sender backlog sized to the receiver's jitter budget, retries blocked datagrams, and reports congestion separately from packet loss. This addresses the recurring `WSAEWOULDBLOCK` (10035) stutter reported in [#7](https://github.com/Ding-Kyoma/AirFlash/issues/7). See [Media send backpressure](https://github.com/Ding-Kyoma/AirFlash/blob/main/docs/MEDIA-SEND-BACKPRESSURE.md).
 - Skip Windows 11-only window attributes on Windows 10. Reject new MSI installations below build 17763 while preserving maintenance, uninstall, and user data for existing installations.
 - Validate the selected .NET SDK before development or release builds reserve a version or clear existing build output.
 
 ## Known Limitations
 
 - Windows 10 startup, discovery, pairing, and playback still require affected-user verification. The original reported startup failure has not been reproduced or assigned a confirmed cause.
-- The discovery fix does not establish the cause of every HomePod disconnection. Intermittent crackling/audio gaps ([#7](https://github.com/Ding-Kyoma/AirFlash/issues/7)), socket timeouts ([#16](https://github.com/Ding-Kyoma/AirFlash/issues/16)), and the remaining delayed-session lifecycle cases in #14 remain open.
+- The discovery fix does not establish the cause of every HomePod disconnection. The bounded sender backlog reduces audible gaps from transient local send-path congestion but does not remove their host-side cause; socket timeouts ([#16](https://github.com/Ding-Kyoma/AirFlash/issues/16)) and the remaining delayed-session lifecycle cases in #14 remain open.
 - Per-application audio capture ([#18](https://github.com/Ding-Kyoma/AirFlash/issues/18)) is on the feature plan.
 
 ## Downloads

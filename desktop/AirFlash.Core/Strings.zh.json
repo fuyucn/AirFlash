@@ -263,5 +263,7 @@
   "Audio engine initialization timed out after 10 seconds.": "音频引擎初始化超过 10 秒，已超时。",
   "Windows DNS-SD is unavailable. You can add a receiver manually and collect startup diagnostics.": "Windows DNS-SD 不可用。可以手动添加接收器，并收集启动诊断信息。",
   "Playback": "播放",
-  "Recording": "录音"
+  "Recording": "录音",
+  "Send backpressure: {0}; dropped backlog: {1}": "发送背压：{0}；丢弃积压：{1}",
+  "Sender backlog: {0} of {1} packets ({2} bytes); send buffer: {3} bytes": "发送端积压：{0}/{1} 包（{2} 字节）；发送缓冲区：{3} 字节"
 }

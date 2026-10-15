@@ -257,6 +257,34 @@ public sealed class SessionTests
         Assert.Equal("b", controller.Snapshot.Diagnostics!.Warnings![0].Host); Assert.True(audio.Muted);
     }
     [Fact]
+    public async Task BackpressureMetricsAreReportedSeparatelyFromLoss()
+    {
+        var process = new FakeConnection(); var factory = new FakeFactory(process);
+        await using var controller = new SessionController(factory, new FakeAudio(), timing: Fast);
+        await controller.StartAsync(Pod(), Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        // A full local send path is congestion to retry, so it is not reported as packet loss.
+        process.EmitData(new { @event = "transport_metrics", session_uptime_ms = 500, members = new object[] { new { host = "a", media = new { packets_sent = 100, media_send_errors = 0, media_send_backlogged = 7, media_send_dropped = 3, media_backlog_packets = 2, media_backlog_bytes = 2856, media_backlog_limit_packets = 18, audio_send_buffer_bytes = 131072 }, health = new { } } } });
+        await Until(() => controller.Snapshot.Diagnostics?.Transport is not null);
+        var member = controller.Snapshot.Diagnostics!.Transport!.Members[0];
+        Assert.Equal(100, member.PacketsSent); Assert.Equal(0, member.SendErrors);
+        Assert.Equal(7, member.Backlogged); Assert.Equal(3, member.Dropped);
+        Assert.Equal(2, member.BacklogPackets); Assert.Equal(2856, member.BacklogBytes);
+        Assert.Equal(18, member.BacklogLimitPackets); Assert.Equal(131072, member.AudioSendBufferBytes);
+    }
+    [Fact]
+    public async Task AbsentBackpressureFieldsStayUnknownRatherThanZero()
+    {
+        var process = new FakeConnection(); var factory = new FakeFactory(process);
+        await using var controller = new SessionController(factory, new FakeAudio(), timing: Fast);
+        await controller.StartAsync(Pod(), Settings()); await Until(() => controller.Snapshot.State == PlaybackState.Streaming);
+        // An older engine omits the new fields; the panel must not invent zeros.
+        process.EmitData(new { @event = "transport_metrics", session_uptime_ms = 500, members = new object[] { new { host = "a", media = new { packets_sent = 10 }, health = new { } } } });
+        await Until(() => controller.Snapshot.Diagnostics?.Transport is not null);
+        var member = controller.Snapshot.Diagnostics!.Transport!.Members[0];
+        Assert.Null(member.Backlogged); Assert.Null(member.Dropped);
+        Assert.Null(member.BacklogPackets); Assert.Null(member.AudioSendBufferBytes);
+    }
+    [Fact]
     public async Task ReconnectRetainsFailureAndMetricsUntilANewPlayback()
     {
         var first = new FakeConnection(); var second = new FakeConnection(); var third = new FakeConnection(); var factory = new FakeFactory(first, second, third);

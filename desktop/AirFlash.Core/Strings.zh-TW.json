@@ -256,5 +256,7 @@
   "Could not update the equalizer.": "無法更新等化器。",
   "Could not update the equalizer: {0}": "無法更新等化器：{0}",
   "Playback": "播放",
-  "Recording": "錄音"
+  "Recording": "錄音",
+  "Send backpressure: {0}; dropped backlog: {1}": "傳送背壓：{0}；丟棄積壓：{1}",
+  "Sender backlog: {0} of {1} packets ({2} bytes); send buffer: {3} bytes": "傳送端積壓：{0}/{1} 封包（{2} 位元組）；傳送緩衝區：{3} 位元組"
 }

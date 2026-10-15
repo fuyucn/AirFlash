@@ -70,6 +70,15 @@ impl Packetizer {
         self.latency = latency;
         self.retention = Duration::from_secs(1).max(latency + Duration::from_millis(250));
     }
+    /// Receiver jitter budget expressed in packet slots.
+    ///
+    /// The sender uses this to bound how much audio it may hold while the local
+    /// send path is full: a packet retained longer than the budget would arrive
+    /// after the receiver already played its timestamp.
+    pub fn latency_slots(&self) -> u64 {
+        let packet = Duration::from_nanos(FRAMES as u64 * 1_000_000_000 / self.rate as u64);
+        (self.latency.as_nanos() / packet.as_nanos().max(1)) as u64
+    }
     /// Deliberately lost media slots advance RTP, but never reuse an encryption nonce.
     pub fn skip_packets(&mut self, count: u64) {
         self.seq = self.seq.wrapping_add(count as u16);

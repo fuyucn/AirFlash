@@ -343,7 +343,9 @@ fn temporary_udp_failure_preserves_session_and_persistent_failure_is_typed() {
     .unwrap();
     m.observe_send(Ok(()), start + Duration::from_secs(2), &h)
         .unwrap();
-    assert_eq!(m.metrics.media_send_errors, 1);
+    // Local backpressure is congestion to retry, not packet loss.
+    assert_eq!(m.metrics.media_send_errors, 0);
+    assert_eq!(m.metrics.media_send_backlogged, 1);
     assert_eq!(m.metrics.packets_sent, 1);
     assert_eq!(h.notices().len(), 2);
     let error = m

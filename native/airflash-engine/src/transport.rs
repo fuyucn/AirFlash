@@ -25,6 +25,73 @@ const RETRANSMIT_BUDGET: Duration = Duration::from_millis(1);
 const MAX_REQUESTS: usize = 16;
 const MAX_RESENDS: usize = 32;
 const MAX_PENDING: usize = 512;
+// A blocked UDP socket means the local send path is briefly full, not that the
+// packet is unusable. Requested kernel headroom and a bounded sender backlog
+// turn those drops into bounded delay that the receiver jitter buffer can hide.
+const AUDIO_SEND_BUFFER_BYTES: i32 = 128 * 1024;
+const CONTROL_SEND_BUFFER_BYTES: i32 = 128 * 1024;
+const MAX_FLUSH_PACKETS: usize = 64;
+const MIN_BACKLOG_PACKETS: u64 = 8;
+const MAX_BACKLOG_PACKETS: u64 = 128;
+
+/// Outcome of one media datagram attempt.
+#[derive(Debug)]
+pub enum SendDisposition {
+    /// The kernel accepted the datagram.
+    Sent,
+    /// The local send path was full; the caller keeps the packet for a retry.
+    Retained,
+    /// The socket rejected the datagram for a reason that is not backpressure.
+    Discarded,
+}
+
+/// Local send-path congestion, reported by Windows as `WSAEWOULDBLOCK` (10035).
+///
+/// This is a full send buffer, not a broken route or a dead receiver, so the
+/// packet is worth retrying rather than discarding.
+fn is_send_backpressure(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+    )
+}
+
+/// Ask the kernel for more send-buffer headroom, returning the granted size.
+///
+/// Windows silently clamps the request to the stack maximum, so the granted
+/// value is what the accounting below uses.
+fn request_send_buffer(socket: &UdpSocket, requested: i32) -> i32 {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        use windows::Win32::Networking::WinSock::{
+            SOCKET, SOL_SOCKET, SO_SNDBUF, getsockopt, setsockopt,
+        };
+        let raw = SOCKET(socket.as_raw_socket() as usize);
+        let requested_bytes = requested.to_ne_bytes();
+        // Failure is not fatal: the default buffer still works, just smaller.
+        if unsafe { setsockopt(raw, SOL_SOCKET, SO_SNDBUF, Some(&requested_bytes)) } != 0 {
+            return 0;
+        }
+        let mut granted: i32 = 0;
+        let mut length = std::mem::size_of::<i32>() as i32;
+        let ok = unsafe {
+            getsockopt(
+                raw,
+                SOL_SOCKET,
+                SO_SNDBUF,
+                windows::core::PSTR((&mut granted as *mut i32).cast()),
+                &mut length,
+            )
+        };
+        if ok == 0 { granted } else { 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (socket, requested);
+        0
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Fault {
@@ -398,6 +465,9 @@ impl Drop for FeedbackWorker {
 pub struct MediaMetrics {
     pub packets_sent: u64,
     pub media_send_errors: u64,
+    pub media_send_backlogged: u64,
+    pub media_send_dropped: u64,
+    pub media_backlog_peak_bytes: u64,
     pub sync_send_errors: u64,
     pub control_receive_errors: u64,
     pub retransmit_requests: u64,
@@ -416,6 +486,10 @@ pub struct MediaTransport {
     control: UdpSocket,
     remote: SocketAddr,
     pending: VecDeque<(u16, SocketAddr)>,
+    backlog: VecDeque<Vec<u8>>,
+    backlog_bytes: usize,
+    audio_send_buffer: i32,
+    control_send_buffer: i32,
     latency: Duration,
     estimated: bool,
     last_success: Instant,
@@ -430,6 +504,10 @@ impl MediaTransport {
     ) -> Result<Self> {
         audio.set_nonblocking(true)?;
         control.set_nonblocking(true)?;
+        // Best effort: a larger kernel queue lets a brief local stall drain
+        // instead of returning WSAEWOULDBLOCK on the very next datagram.
+        let audio_send_buffer = request_send_buffer(&audio, AUDIO_SEND_BUFFER_BYTES);
+        let control_send_buffer = request_send_buffer(&control, CONTROL_SEND_BUFFER_BYTES);
         Ok(Self {
             packetizer,
             metrics: MediaMetrics::default(),
@@ -437,6 +515,10 @@ impl MediaTransport {
             control,
             remote,
             pending: VecDeque::new(),
+            backlog: VecDeque::new(),
+            backlog_bytes: 0,
+            audio_send_buffer,
+            control_send_buffer,
             latency: Duration::from_millis(150),
             estimated: true,
             last_success: Instant::now(),
@@ -465,6 +547,11 @@ impl MediaTransport {
         v["receiver_latency_ms"] = json!(self.latency.as_secs_f64() * 1000.0);
         v["receiver_latency_estimated"] = json!(self.estimated);
         v["retransmit_pending"] = json!(self.pending.len());
+        v["media_backlog_packets"] = json!(self.backlog.len());
+        v["media_backlog_bytes"] = json!(self.backlog_bytes);
+        v["media_backlog_limit_packets"] = json!(self.backlog_limit());
+        v["audio_send_buffer_bytes"] = json!(self.audio_send_buffer);
+        v["control_send_buffer_bytes"] = json!(self.control_send_buffer);
         v
     }
     pub fn sync(&mut self, clock_ns: u64, id: Option<u64>, latency: u32, first: bool) {
@@ -485,38 +572,84 @@ impl MediaTransport {
         let packet = self
             .packetizer
             .packet_at(pcm, first, now, media_time + self.latency)?;
-        self.observe_send(self.audio.send(&packet).map(|_| ()), now, health)
+        self.enqueue_media(packet);
+        self.flush_media(now, health)
     }
-    // One failed datagram is media loss, not evidence of a dead RTSP session.
+    /// Retain one encoded packet, discarding only audio that is already expired.
+    ///
+    /// The backlog is bounded by the receiver's jitter budget: a packet held
+    /// longer than that budget can no longer be played on time, so the oldest
+    /// entries are dropped instead of delivering useless audio.
+    fn enqueue_media(&mut self, packet: Vec<u8>) {
+        let limit = self.backlog_limit();
+        while self.backlog.len() >= limit {
+            let expired = self.backlog.pop_front().expect("backlog is not empty");
+            self.backlog_bytes = self.backlog_bytes.saturating_sub(expired.len());
+            self.metrics.media_send_dropped += 1;
+        }
+        self.backlog_bytes += packet.len();
+        self.backlog.push_back(packet);
+        self.metrics.media_backlog_peak_bytes = self
+            .metrics
+            .media_backlog_peak_bytes
+            .max(self.backlog_bytes as u64);
+    }
+    /// Packet slots that still fit inside the receiver's jitter budget.
+    fn backlog_limit(&self) -> usize {
+        let slots = self.packetizer.latency_slots();
+        // Hold back a quarter of the budget so a retained packet still arrives
+        // before the timestamp the receiver will play it at.
+        (slots * 3 / 4).clamp(MIN_BACKLOG_PACKETS, MAX_BACKLOG_PACKETS) as usize
+    }
+    /// Drop the whole backlog after the scheduler skipped expired slots.
+    ///
+    /// Audio queued before a stall is older than the recovered timeline, so
+    /// sending it would only add latency the receiver cannot use.
+    pub fn abandon_backlog(&mut self) {
+        self.metrics.media_send_dropped += self.backlog.len() as u64;
+        self.backlog.clear();
+        self.backlog_bytes = 0;
+    }
+    /// Drain what the local send path accepts, retaining the rest.
+    fn flush_media(&mut self, now: Instant, health: &Health) -> Result<()> {
+        let mut sent = 0usize;
+        while let Some(packet) = self.backlog.pop_front() {
+            let result = self.audio.send(&packet).map(|_| ());
+            let outcome = self.observe_send(result, now, health)?;
+            match outcome {
+                SendDisposition::Sent => {
+                    sent += 1;
+                    self.backlog_bytes = self.backlog_bytes.saturating_sub(packet.len());
+                }
+                // Retain the packet the kernel refused and stop for this tick.
+                SendDisposition::Retained => {
+                    self.backlog.push_front(packet);
+                    break;
+                }
+                // A hard failure is not retried; the packet is consumed.
+                SendDisposition::Discarded => {
+                    self.backlog_bytes = self.backlog_bytes.saturating_sub(packet.len());
+                }
+            }
+            if sent >= MAX_FLUSH_PACKETS {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Account for one media datagram attempt.
+    ///
+    /// A full local send path is transient congestion, so it is retained rather
+    /// than counted as loss. Only a genuinely failing socket is an error, and a
+    /// socket that never accepts a datagram still trips the twelve-second
+    /// watchdog. One failed datagram alone is not evidence of a dead session.
     pub fn observe_send(
         &mut self,
         result: std::io::Result<()>,
         now: Instant,
         health: &Health,
-    ) -> Result<()> {
-        if let Err(error) = result {
-            self.metrics.media_send_errors += 1;
-            if !self.send_warning {
-                self.send_warning = true;
-                health.notice(
-                    &self.remote.ip().to_string(),
-                    "media",
-                    "media_send_delayed",
-                    &format!("Audio send failed temporarily: {error}"),
-                    false,
-                );
-            }
-            if now.saturating_duration_since(self.last_success) >= FAILURE_TIMEOUT {
-                return Err(Fault::new(
-                    self.remote.ip(),
-                    "media",
-                    "media_send_timeout",
-                    true,
-                    error,
-                )
-                .into());
-            }
-        } else {
+    ) -> Result<SendDisposition> {
+        let Err(error) = result else {
             self.metrics.packets_sent += 1;
             self.last_success = now;
             if self.send_warning {
@@ -529,8 +662,41 @@ impl MediaTransport {
                     true,
                 );
             }
+            return Ok(SendDisposition::Sent);
+        };
+        if !self.send_warning {
+            self.send_warning = true;
+            health.notice(
+                &self.remote.ip().to_string(),
+                "media",
+                "media_send_delayed",
+                &format!("Audio send failed temporarily: {error}"),
+                false,
+            );
         }
-        Ok(())
+        // A send path that never drains is a dead session whether the socket
+        // reports backpressure or a hard failure, so the watchdog covers both.
+        self.check_send_watchdog(now, &error)?;
+        if is_send_backpressure(&error) {
+            self.metrics.media_send_backlogged += 1;
+            return Ok(SendDisposition::Retained);
+        }
+        self.metrics.media_send_errors += 1;
+        Ok(SendDisposition::Discarded)
+    }
+    /// Fail the session when no datagram has been accepted for twelve seconds.
+    fn check_send_watchdog(&self, now: Instant, error: &std::io::Error) -> Result<()> {
+        if now.saturating_duration_since(self.last_success) < FAILURE_TIMEOUT {
+            return Ok(());
+        }
+        Err(Fault::new(
+            self.remote.ip(),
+            "media",
+            "media_send_timeout",
+            true,
+            error,
+        )
+        .into())
     }
     pub fn service_retransmits(&mut self) {
         let until = Instant::now() + RETRANSMIT_BUDGET;
@@ -675,5 +841,129 @@ mod schedule_tests {
         assert_eq!(skipped, due / FRAMES as u64);
         assert_eq!(s.frames, skipped * FRAMES as u64);
         assert_eq!(s.skipped_packets, skipped);
+    }
+}
+
+#[cfg(test)]
+mod backlog_tests {
+    use super::*;
+
+    fn transport(latency: Duration) -> MediaTransport {
+        let audio = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let control = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        audio.connect(peer.local_addr().unwrap()).unwrap();
+        let mut t = MediaTransport::new(
+            Packetizer::new([5; 32], 1, 0, 1),
+            audio,
+            control,
+            peer.local_addr().unwrap(),
+        )
+        .unwrap();
+        t.packetizer.configure_latency(latency);
+        t
+    }
+
+    #[test]
+    fn latency_slots_track_the_receiver_budget() {
+        // 352 frames at 44.1 kHz is one 8 ms slot, so a 200 ms budget is 25 slots.
+        let t = transport(Duration::from_millis(200));
+        assert_eq!(t.packetizer.latency_slots(), 25);
+        assert_eq!(
+            transport(Duration::from_millis(120)).packetizer.latency_slots(),
+            15
+        );
+    }
+
+    #[test]
+    fn backlog_is_bounded_by_the_jitter_budget() {
+        let mut t = transport(Duration::from_millis(200));
+        let limit = t.backlog_limit() as usize;
+        assert!(limit > 0 && limit < 25, "limit {limit} must leave headroom");
+        for _ in 0..limit + 10 {
+            t.enqueue_media(vec![0; 1428]);
+        }
+        // Only the newest audio is retained; older slots are already unplayable.
+        assert_eq!(t.backlog.len(), limit);
+        assert_eq!(t.metrics.media_send_dropped, 10);
+    }
+
+    #[test]
+    fn flush_retains_on_backpressure_and_drains_afterwards() {
+        let mut t = transport(Duration::from_millis(200));
+        let h = Health::default();
+        let now = Instant::now();
+        t.enqueue_media(vec![0; 1428]);
+        t.enqueue_media(vec![1; 1428]);
+        // A blocked send retains the packet and does not count it as loss.
+        let outcome = t
+            .observe_send(
+                Err(std::io::ErrorKind::WouldBlock.into()),
+                now,
+                &h,
+            )
+            .unwrap();
+        assert!(matches!(outcome, SendDisposition::Retained));
+        assert_eq!(t.metrics.media_send_errors, 0);
+        assert_eq!(t.metrics.media_send_backlogged, 1);
+        assert_eq!(h.notices().len(), 1);
+        // Recovery closes the warning edge and resumes counting sent packets.
+        let outcome = t.observe_send(Ok(()), now, &h).unwrap();
+        assert!(matches!(outcome, SendDisposition::Sent));
+        assert_eq!(t.metrics.packets_sent, 1);
+        assert_eq!(h.notices().len(), 1);
+    }
+
+    #[test]
+    fn hard_failure_is_still_counted_and_watchdog_still_fires() {
+        let mut t = transport(Duration::from_millis(200));
+        let h = Health::default();
+        let start = Instant::now();
+        t.reset_watchdog(start);
+        let outcome = t
+            .observe_send(
+                Err(std::io::ErrorKind::NetworkUnreachable.into()),
+                start + Duration::from_secs(1),
+                &h,
+            )
+            .unwrap();
+        assert!(matches!(outcome, SendDisposition::Discarded));
+        assert_eq!(t.metrics.media_send_errors, 1);
+        // Backpressure alone also trips the watchdog when nothing drains.
+        let error = t
+            .observe_send(
+                Err(std::io::ErrorKind::WouldBlock.into()),
+                start + FAILURE_TIMEOUT,
+                &h,
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<Fault>().unwrap().code,
+            "media_send_timeout"
+        );
+    }
+
+    #[test]
+    fn abandoning_the_backlog_discards_only_queued_audio() {
+        let mut t = transport(Duration::from_millis(200));
+        for _ in 0..4 {
+            t.enqueue_media(vec![0; 1428]);
+        }
+        assert_eq!(t.backlog.len(), 4);
+        t.abandon_backlog();
+        assert!(t.backlog.is_empty());
+        assert_eq!(t.backlog_bytes, 0);
+        assert_eq!(t.metrics.media_send_dropped, 4);
+        // The retained-packet accounting is untouched by dropping queued audio.
+        assert_eq!(t.metrics.media_send_errors, 0);
+    }
+
+    #[test]
+    fn metrics_expose_backlog_and_granted_buffers() {
+        let t = transport(Duration::from_millis(500));
+        let v = t.metrics();
+        assert!(v["media_backlog_limit_packets"].as_u64().unwrap() > 0);
+        assert_eq!(v["media_backlog_packets"].as_u64().unwrap(), 0);
+        assert!(v.get("audio_send_buffer_bytes").is_some());
     }
 }
