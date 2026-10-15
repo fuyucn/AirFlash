@@ -80,4 +80,27 @@ public sealed class StreamHealthTests
         var health = StreamHealth.Evaluate(PlaybackState.Streaming, new StreamMetrics(Underruns: 1), Transport(Member(dropped: 9)), false);
         Assert.Equal(HealthLevel.Degraded, health.Level);
     }
+
+    [Fact]
+    public void EveryReasonHasATranslation()
+    {
+        // The Monitor page renders the reason through L.Get, so an untranslated
+        // reason would show English text inside a Chinese interface.
+        var reasons = new[]
+        {
+            StreamHealth.Evaluate(PlaybackState.Idle, null, null, false).Reason,
+            StreamHealth.Evaluate(PlaybackState.Streaming, new StreamMetrics(), Transport(Member()), true).Reason,
+            StreamHealth.Evaluate(PlaybackState.Streaming, new StreamMetrics(), Transport(Member(sendErrors: 1)), false).Reason,
+            StreamHealth.Evaluate(PlaybackState.Streaming, new StreamMetrics(), Transport(Member(dropped: 1)), false).Reason,
+            StreamHealth.Evaluate(PlaybackState.Streaming, new StreamMetrics(), Transport(Member(backlogged: 1)), false).Reason,
+            StreamHealth.Evaluate(PlaybackState.Streaming, new StreamMetrics(), Transport(Member()), false).Reason,
+        };
+        foreach (var catalog in new[] { "AirFlash.Core.Strings.zh.json", "AirFlash.Core.Strings.zh-TW.json" })
+        {
+            using var stream = typeof(L).Assembly.GetManifestResourceStream(catalog)!;
+            var translations = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(stream)!;
+            foreach (var reason in reasons.Distinct())
+                Assert.True(translations.ContainsKey(reason), $"{catalog} is missing the health reason {reason}");
+        }
+    }
 }

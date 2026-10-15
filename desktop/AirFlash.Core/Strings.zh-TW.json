@@ -50,7 +50,6 @@
   "Select a receiver to play system audio": "選擇接收器以播放系統音訊",
   "The previous capture endpoint is unavailable. Select another in Settings → Audio capture.": "原擷取端點不可用，請在設定 → 音訊擷取中重新選擇。",
   "The selected capture endpoint is unavailable. Select another.": "所選擷取端點目前不可用，請重新選擇。",
-  "Engine: {0}\nStatus: {1}\n{2}\nLocal p95: {3}\nQueue age: {4}\nUnderruns: {5}; drops: {6}\nEnd-to-end latency: not measured": "引擎：{0}\n狀態：{1}\n{2}\n本機 p95：{3}\n佇列年齡：{4}\n欠載：{5}；丟棄：{6}\n端對端延遲：未測量",
   "Stop playback / disconnect": "停止播放 / 中斷連線",
   "Play on this device": "在此裝置播放",
   "Offline": "離線",
@@ -302,5 +301,6 @@
   "Audio was lost and the timeline had to recover": "有音訊遺失，時間軸被迫恢復",
   "Some audio was discarded while recovering": "恢復過程中丟棄了部分音訊",
   "Send path is briefly full; audio is being held, not lost": "傳送通道短暫壅塞；音訊被暫存而非遺失",
-  "No loss detected": "未偵測到遺失"
+  "No loss detected": "未偵測到遺失",
+  "Engine: {0}\nStatus: {1}\n{2}\nLocal p95: {3}\nQueue age: {4}\nUnderruns: {5}; drops: {6}\nTarget latency: {7}\nReceiver jitter buffer: {8}\nEstimated audible delay: {9}": "引擎：{0}\n狀態：{1}\n{2}\n本機 p95：{3}\n佇列時長：{4}\n欠載：{5}；丟幀：{6}\n目標延遲：{7}\n接收端抖動緩衝：{8}\n估算可聽延遲：{9}"
 }

@@ -52,7 +52,6 @@
   "Select a receiver to play system audio": "选择一个接收器，开始播放系统音频",
   "The previous capture endpoint is unavailable. Select another in Settings → Audio capture.": "原采集端点不可用，请在设置 → 音频采集中重新选择。",
   "The selected capture endpoint is unavailable. Select another.": "所选采集端点当前不可用，请重新选择。",
-  "Engine: {0}\nStatus: {1}\n{2}\nLocal p95: {3}\nQueue age: {4}\nUnderruns: {5}; drops: {6}\nEnd-to-end latency: not measured": "引擎：{0}\n状态：{1}\n{2}\n本机 p95：{3}\n队列年龄：{4}\n欠载：{5}；丢弃：{6}\n端到端延迟：未测量",
   "Stop playback / disconnect": "停止播放 / 取消连接",
   "Play on this device": "在此设备播放",
   "Offline": "离线",
@@ -309,5 +308,6 @@
   "Audio was lost and the timeline had to recover": "有音频丢失，时间线被迫恢复",
   "Some audio was discarded while recovering": "恢复过程中丢弃了部分音频",
   "Send path is briefly full; audio is being held, not lost": "发送通道短暂拥塞；音频被暂存而非丢失",
-  "No loss detected": "未检测到丢失"
+  "No loss detected": "未检测到丢失",
+  "Engine: {0}\nStatus: {1}\n{2}\nLocal p95: {3}\nQueue age: {4}\nUnderruns: {5}; drops: {6}\nTarget latency: {7}\nReceiver jitter buffer: {8}\nEstimated audible delay: {9}": "引擎：{0}\n状态：{1}\n{2}\n本机 p95：{3}\n队列时长：{4}\n欠载：{5}；丢帧：{6}\n目标延迟：{7}\n接收端抖动缓冲：{8}\n估算可听延迟：{9}"
 }

@@ -126,6 +126,8 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
         : Latency.JitterBufferEstimated
             ? L.Format("{0:F0} ms · requested, not receiver-reported", ms)
             : L.Format("{0:F0} ms · receiver-reported", ms);
+    /// <summary>True when the shown buffer is the request rather than a receiver report.</summary>
+    public bool MonitorReceiverLatencyRequested => Latency.JitterBuffer is not null && Latency.JitterBufferEstimated;
     /// <summary>Measured local capture-queue delay, the sender's own contribution.</summary>
     public string MonitorLocalDelay => Latency.CaptureDelay is { } ms ? $"{ms:F1} ms" : "—";
     /// <summary>Measured round trip of the AirPlay feedback request, not a one-way delay.</summary>
@@ -604,7 +606,7 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
         finally { _settingsGate.Release(); if (_volumeDirty && !_closing) { _volumeTimer.Stop(); _volumeTimer.Start(); } }
     }
     public void ShowError(Exception error) { AppPaths.Log(error.ToString()); Notice = error.Message; }
-    public string Diagnostics() => $"AirFlash {AppPaths.Version} / WPF\n" + L.Format("Engine: {0}\nStatus: {1}\n{2}\nLocal p95: {3}\nQueue age: {4}\nUnderruns: {5}; drops: {6}\nEnd-to-end latency: not measured", EngineVersion, StatusTitle, StatusDetail, MonitorLatency, MonitorQueue, MonitorUnderruns, MonitorDrops) + "\n" + System.Text.Json.JsonSerializer.Serialize(_snapshot.Diagnostics, AppSettings.JsonOptions);
+    public string Diagnostics() => $"AirFlash {AppPaths.Version} / WPF\n" + L.Format("Engine: {0}\nStatus: {1}\n{2}\nLocal p95: {3}\nQueue age: {4}\nUnderruns: {5}; drops: {6}\nTarget latency: {7}\nReceiver jitter buffer: {8}\nEstimated audible delay: {9}", EngineVersion, StatusTitle, StatusDetail, MonitorLatency, MonitorQueue, MonitorUnderruns, MonitorDrops, MonitorTargetLatency, MonitorReceiverLatency, MonitorEstimatedValue) + "\n" + System.Text.Json.JsonSerializer.Serialize(_snapshot.Diagnostics, AppSettings.JsonOptions);
     public ValueTask DisposeAsync() => new(_disposeTask ??= DisposeCoreAsync());
     private async Task DisposeCoreAsync()
     {
