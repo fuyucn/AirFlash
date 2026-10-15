@@ -78,32 +78,17 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
         HealthLevel.Degraded => "Degraded",
         _ => "Not playing"
     });
-    /// <summary>Chip fill for the health badge. Always paired with a label, never colour alone.</summary>
-    public Brush HealthFill => Health.Level switch
+    /// <summary>
+    /// Health palette key. Resolved through DynamicResource in XAML so a theme
+    /// switch repaints the chip; computed brushes would keep the old colours.
+    /// </summary>
+    public string HealthPalette => Health.Level switch
     {
-        HealthLevel.Good => Tint(SuccessBrushKey, 0x1F),
-        HealthLevel.Attention => Tint(WarningBrushKey, 0x1F),
-        HealthLevel.Degraded => Tint(ErrorBrushKey, 0x1F),
-        _ => (Brush)Application.Current.Resources["TintBrush"]
+        HealthLevel.Good => "Success",
+        HealthLevel.Attention => "Warning",
+        HealthLevel.Degraded => "Error",
+        _ => "Neutral"
     };
-    public Brush HealthAccent => Health.Level switch
-    {
-        HealthLevel.Good => (Brush)Application.Current.Resources[SuccessBrushKey],
-        HealthLevel.Attention => (Brush)Application.Current.Resources[WarningBrushKey],
-        HealthLevel.Degraded => (Brush)Application.Current.Resources[ErrorBrushKey],
-        _ => (Brush)Application.Current.Resources["MutedBrush"]
-    };
-    public Brush HealthInk => Health.Level == HealthLevel.Degraded
-        ? (Brush)Application.Current.Resources[ErrorBrushKey]
-        : (Brush)Application.Current.Resources["TextBrush"];
-    private const string SuccessBrushKey = "SuccessBrush", WarningBrushKey = "WarningBrush", ErrorBrushKey = "ErrorBrush";
-    private static Brush Tint(string key, byte alpha)
-    {
-        var color = ((SolidColorBrush)Application.Current.Resources[key]).Color;
-        var brush = new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
-        brush.Freeze();
-        return brush;
-    }
     /// <summary>Rolling samples for the Monitor charts.</summary>
     public MonitorHistory History => _history;
     public IReadOnlyList<double?> LatencyTrend => _history.Values(MonitorSeries.Latency);
@@ -694,11 +679,13 @@ public sealed class TransportMemberViewModel(MemberTransportMetrics metrics) : O
     public string Headline => string.Join(" · ", new[]
     {
         Metrics.ReceiverLatencyMs is { } latency ? $"{latency:F0} ms" : null,
-        Metrics.SendErrors is > 0 ? L.Format("{0} send errors", Metrics.SendErrors) : null,
-        Metrics.Dropped is > 0 ? L.Format("{0} dropped", Metrics.Dropped) : null,
-        Metrics.Backlogged is > 0 ? L.Format("{0} buffered", Metrics.Backlogged) : null,
+        Metrics.SendErrors is > 0 ? Localized("1 send error", "{0} send errors", Metrics.SendErrors.Value) : null,
+        Metrics.Dropped is > 0 ? Localized("1 dropped", "{0} dropped", Metrics.Dropped.Value) : null,
+        Metrics.Backlogged is > 0 ? Localized("1 buffered", "{0} buffered", Metrics.Backlogged.Value) : null,
         Metrics.FeedbackRttMs is { } rtt ? $"{rtt:F1} ms RTT" : null,
     }.Where(part => part is not null));
+    /// <summary>Singular and plural forms so a count of one reads naturally.</summary>
+    private static string Localized(string singular, string plural, long count) => count == 1 ? L.Get(singular) : L.Format(plural, count);
     public string Summary => string.Join("\n", new[]
     {
         L.Format("Packets sent: {0}; send errors: {1}; sync errors: {2}", Count(Metrics.PacketsSent), Count(Metrics.SendErrors), Count(Metrics.SyncErrors)),

@@ -208,10 +208,64 @@
         <Border Style="{StaticResource Card}">
           <StackPanel>
             <DockPanel>
-              <Border DockPanel.Dock="Right" Style="{StaticResource Chip}" Background="{Binding App.HealthFill}">
+              <!--
+                Health chip. Colour is always paired with the label text, and both
+                are theme resources so switching theme repaints them correctly.
+              -->
+              <Border DockPanel.Dock="Right" VerticalAlignment="Center" CornerRadius="999" Padding="9,4">
+                <Border.Style>
+                  <Style TargetType="Border">
+                    <Setter Property="Background" Value="{DynamicResource TintBrush}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding App.HealthPalette}" Value="Success">
+                        <Setter Property="Background" Value="{DynamicResource SuccessTintBrush}"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding App.HealthPalette}" Value="Warning">
+                        <Setter Property="Background" Value="{DynamicResource WarningTintBrush}"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding App.HealthPalette}" Value="Error">
+                        <Setter Property="Background" Value="{DynamicResource ErrorTintBrush}"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Border.Style>
                 <StackPanel Orientation="Horizontal">
-                  <Ellipse Width="7" Height="7" Fill="{Binding App.HealthAccent}" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                  <TextBlock Text="{Binding App.HealthLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{Binding App.HealthInk}" VerticalAlignment="Center"/>
+                  <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,7,0">
+                    <Ellipse.Style>
+                      <Style TargetType="Ellipse">
+                        <Setter Property="Fill" Value="{DynamicResource MutedBrush}"/>
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding App.HealthPalette}" Value="Success">
+                            <Setter Property="Fill" Value="{DynamicResource SuccessBrush}"/>
+                          </DataTrigger>
+                          <DataTrigger Binding="{Binding App.HealthPalette}" Value="Warning">
+                            <Setter Property="Fill" Value="{DynamicResource WarningBrush}"/>
+                          </DataTrigger>
+                          <DataTrigger Binding="{Binding App.HealthPalette}" Value="Error">
+                            <Setter Property="Fill" Value="{DynamicResource ErrorBrush}"/>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Ellipse.Style>
+                  </Ellipse>
+                  <TextBlock Text="{Binding App.HealthLabel}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding App.HealthPalette}" Value="Success">
+                            <Setter Property="Foreground" Value="{DynamicResource SuccessBrush}"/>
+                          </DataTrigger>
+                          <DataTrigger Binding="{Binding App.HealthPalette}" Value="Warning">
+                            <Setter Property="Foreground" Value="{DynamicResource WarningBrush}"/>
+                          </DataTrigger>
+                          <DataTrigger Binding="{Binding App.HealthPalette}" Value="Error">
+                            <Setter Property="Foreground" Value="{DynamicResource ErrorBrush}"/>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
                 </StackPanel>
               </Border>
               <StackPanel>
@@ -270,6 +324,7 @@
             </DockPanel>
             <Grid Height="132" Margin="0,14,0,0">
               <ui:Sparkline Values="{Binding App.LatencyTrend}" Baseline="{Binding App.TargetLatencyValue}" Stroke="{DynamicResource AccentBrush}" Visibility="{Binding App.HasTrend, Converter={StaticResource BoolVisibility}}"/>
+              <!-- Keep the plot area visually intentional while samples accumulate. -->
               <TextBlock Text="{loc:Text 'Collecting samples…'}" HorizontalAlignment="Center" VerticalAlignment="Center">
                 <TextBlock.Style>
                   <Style TargetType="TextBlock" BasedOn="{StaticResource Hint}">

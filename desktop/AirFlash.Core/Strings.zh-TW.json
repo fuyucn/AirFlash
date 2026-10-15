@@ -294,5 +294,8 @@
   "Control channel round trip": "控制通道往返",
   "No receiver selected": "未選擇接收器",
   "Requested; receiver reported none": "為請求值；接收端未回報",
-  "Profile in use": "目前使用的設定檔"
+  "Profile in use": "目前使用的設定檔",
+  "1 send error": "1 個傳送錯誤",
+  "1 dropped": "丟棄 1 個",
+  "1 buffered": "暫存 1 個"
 }

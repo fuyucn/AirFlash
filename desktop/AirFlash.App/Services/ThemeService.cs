@@ -80,6 +80,11 @@ public sealed class ThemeService : IDisposable
         SetBrush("ElevatedBrush", palette.Elevated);
         SetBrush("WarningBrush", palette.Warning);
         SetBrush("SuccessBrush", palette.Success);
+        // Tinted chips: the label sits on these, so they are theme resources
+        // rather than computed brushes that would not refresh on a theme switch.
+        SetBrush("SuccessTintBrush", WithAlpha(palette.Success, (byte)(palette.IsDark ? 0x2E : 0x1F)));
+        SetBrush("WarningTintBrush", WithAlpha(palette.Warning, (byte)(palette.IsDark ? 0x2E : 0x1F)));
+        SetBrush("ErrorTintBrush", WithAlpha(palette.Error, (byte)(palette.IsDark ? 0x2E : 0x1F)));
 
         ApplyFluentResources(palette);
         ThemeChanged?.Invoke(palette);

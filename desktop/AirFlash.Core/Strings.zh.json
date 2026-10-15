@@ -301,5 +301,8 @@
   "Control channel round trip": "控制通道往返",
   "No receiver selected": "未选择接收器",
   "Requested; receiver reported none": "为请求值；接收端未上报",
-  "Profile in use": "当前使用的档位"
+  "Profile in use": "当前使用的档位",
+  "1 send error": "1 个发送错误",
+  "1 dropped": "丢弃 1 个",
+  "1 buffered": "暂存 1 个"
 }
