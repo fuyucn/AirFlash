@@ -212,7 +212,8 @@ internal static class UiSmoke
             // The fixture uses default settings (200 ms profile) and reports a 150 ms receiver buffer,
             // a 10.8 ms capture delay and a 4.2 ms round trip.
             Check(app.MonitorTargetLatency == "200 ms", "monitor shows the configured target latency", checks);
-            Check(app.MonitorReceiverLatency.Contains("150") && app.MonitorReceiverLatency.Contains("requested"), "monitor labels an unreported receiver buffer as requested", checks);
+            // Assert on the localized text so the check holds in every language.
+            Check(app.MonitorReceiverLatency.Contains("150") && app.MonitorReceiverLatency.Contains(L.Get("requested, not receiver-reported")), "monitor labels an unreported receiver buffer as requested", checks);
             Check(app.MonitorLocalDelay == "10.8 ms", "monitor shows the measured local capture delay", checks);
             Check(app.MonitorNetworkRtt == "4.2 ms", "monitor shows the measured feedback round trip", checks);
             Check(app.MonitorEstimatedLatency.Contains("163") && app.MonitorEstimatedLatency.Contains("buffer 150") && app.MonitorEstimatedLatency.Contains("capture 11") && app.MonitorEstimatedLatency.Contains("network 2"), "monitor estimate sums the observed parts", checks);

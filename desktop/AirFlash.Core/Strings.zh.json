@@ -304,5 +304,10 @@
   "Profile in use": "当前使用的档位",
   "1 send error": "1 个发送错误",
   "1 dropped": "丢弃 1 个",
-  "1 buffered": "暂存 1 个"
+  "1 buffered": "暂存 1 个",
+  "Receiver feedback is not responding": "接收端反馈无响应",
+  "Audio was lost and the timeline had to recover": "有音频丢失，时间线被迫恢复",
+  "Some audio was discarded while recovering": "恢复过程中丢弃了部分音频",
+  "Send path is briefly full; audio is being held, not lost": "发送通道短暂拥塞；音频被暂存而非丢失",
+  "No loss detected": "未检测到丢失"
 }

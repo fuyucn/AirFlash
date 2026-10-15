@@ -69,7 +69,8 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Whether the stream is healthy, judged only from observable loss.</summary>
     public StreamHealth Health => StreamHealth.Evaluate(_snapshot.State, _snapshot.Metrics, _snapshot.Diagnostics?.Transport,
         _snapshot.Diagnostics?.Transport?.Members.Any(m => m.FeedbackDelayed == true) == true);
-    public string HealthReason => Health.Reason;
+    /// <summary>Reason text is an English source string; L.Get localizes it for display.</summary>
+    public string HealthReason => L.Get(Health.Reason);
     /// <summary>Localized health label; the level itself stays a stable identifier.</summary>
     public string HealthLabel => L.Get(Health.Level switch
     {

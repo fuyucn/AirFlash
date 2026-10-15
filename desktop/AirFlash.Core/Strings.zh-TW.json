@@ -297,5 +297,10 @@
   "Profile in use": "目前使用的設定檔",
   "1 send error": "1 個傳送錯誤",
   "1 dropped": "丟棄 1 個",
-  "1 buffered": "暫存 1 個"
+  "1 buffered": "暫存 1 個",
+  "Receiver feedback is not responding": "接收端回饋無回應",
+  "Audio was lost and the timeline had to recover": "有音訊遺失，時間軸被迫恢復",
+  "Some audio was discarded while recovering": "恢復過程中丟棄了部分音訊",
+  "Send path is briefly full; audio is being held, not lost": "傳送通道短暫壅塞；音訊被暫存而非遺失",
+  "No loss detected": "未偵測到遺失"
 }
