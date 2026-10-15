@@ -1,0 +1,46 @@
+name: UI screenshots
+
+# Renders the settings and panel surfaces with simulated services and uploads the
+# PNGs. This is the visual review loop for design changes; it never touches real
+# discovery, audio endpoints, receivers or pairing data.
+on:
+  workflow_dispatch:
+    inputs:
+      language:
+        description: 'UI language for the render'
+        type: choice
+        options: ['en-US', 'zh-CN', 'zh-TW']
+        required: true
+        default: 'en-US'
+permissions:
+  contents: read
+jobs:
+  screenshots:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Native checks and build
+        shell: pwsh
+        run: ./scripts/build-native.ps1 -Check
+      - name: Render UI surfaces
+        shell: pwsh
+        run: |
+          $report = Join-Path (Get-Location).Path 'artifacts/ui-smoke/report.json'
+          ./scripts/dotnet.ps1 run --project AirFlash.App/AirFlash.App.csproj -c Release -- `
+            --ui-smoke --ui-language '${{ inputs.language }}' --output $report
+          if ($LASTEXITCODE -ne 0) { throw 'UI smoke failed' }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if (-not $result.ok) { throw "UI smoke reported failure: $($result.error)" }
+          Write-Output "$($result.checks.Count) checks passed"
+      - name: Upload renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots-${{ inputs.language }}
+          path: |
+            artifacts/ui-smoke/*.png
+            artifacts/ui-smoke/report.json
+          retention-days: 14
