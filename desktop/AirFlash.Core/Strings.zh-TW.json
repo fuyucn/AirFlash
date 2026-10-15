@@ -189,8 +189,6 @@
   "Underrun packets": "欠載封包數",
   "Dropped frames": "丟棄影格數",
   "Input sample rate": "輸入取樣率",
-  "End-to-end acoustic latency": "端對端聲學延遲",
-  "Not measured": "未測量",
   "Statistics come from the current audio session and update about once per second. Target latency and local timing are not measurements of audio reaching HomePod.": "統計資料來自目前音訊引擎工作階段，約每秒更新一次。目標延遲與本機耗時不代表聲音到達 HomePod 的實測延遲。",
   "Desktop 0.2.0 · WPF": "桌面端 0.2.0 · WPF",
   "Send Windows system audio to an AirFlash receiver or an existing HomePod stereo pair.": "將 Windows 系統音訊傳送到 AirFlash 接收器。支援單一播放目標，以及現有 HomePod 立體聲組合。",
@@ -258,5 +256,17 @@
   "Playback": "播放",
   "Recording": "錄音",
   "Send backpressure: {0}; dropped backlog: {1}": "傳送背壓：{0}；丟棄積壓：{1}",
-  "Sender backlog: {0} of {1} packets ({2} bytes); send buffer: {3} bytes": "傳送端積壓：{0}/{1} 封包（{2} 位元組）；傳送緩衝區：{3} 位元組"
+  "Sender backlog: {0} of {1} packets ({2} bytes); send buffer: {3} bytes": "傳送端積壓：{0}/{1} 封包（{2} 位元組）；傳送緩衝區：{3} 位元組",
+  "Target latency": "目標延遲",
+  "Receiver jitter buffer": "接收端抖動緩衝",
+  "Local capture delay": "本機擷取延遲",
+  "Measured network round trip": "實測網路往返",
+  "Estimated audible delay": "估算可聽延遲",
+  "{0:F0} ms · requested, not receiver-reported": "{0:F0} 毫秒 · 請求值，非接收端回報",
+  "{0:F0} ms · receiver-reported": "{0:F0} 毫秒 · 接收端回報",
+  "buffer {0:F0}": "緩衝 {0:F0}",
+  "capture {0:F0}": "擷取 {0:F0}",
+  "network {0:F0}": "網路 {0:F0}",
+  "≈ {0:F0} ms": "≈ {0:F0} 毫秒",
+  "Local queue and transport statistics update about once per second. Resent packets are sent, not confirmed received. The estimated audible delay is assembled from the receiver-reported jitter buffer, the measured local capture delay and half the measured feedback round trip; it is an estimate, not an acoustic measurement. The last failure snapshot survives reconnection.": "本機佇列與傳輸統計約每秒更新。重傳成功僅表示已傳送，不代表已被接收。估算可聽延遲由接收端回報的抖動緩衝、實測本機擷取延遲以及實測回饋往返時間的一半相加得到；它是估算值，不是聲學測量值。重連後保留最近故障前的監控快照。"
 }

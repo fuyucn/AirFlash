@@ -258,9 +258,25 @@
               <TextBlock Text="{loc:Text 'Stream sample rate'}" Style="{StaticResource Hint}"/>
               <TextBlock Text="{Binding App.MonitorStreamRate}" HorizontalAlignment="Right"/>
             </DockPanel>
+            <DockPanel Margin="0,0,0,12">
+              <TextBlock Text="{loc:Text 'Target latency'}" Style="{StaticResource Hint}"/>
+              <TextBlock Text="{Binding App.MonitorTargetLatency}" HorizontalAlignment="Right"/>
+            </DockPanel>
+            <DockPanel Margin="0,0,0,12">
+              <TextBlock Text="{loc:Text 'Receiver jitter buffer'}" Style="{StaticResource Hint}"/>
+              <TextBlock Text="{Binding App.MonitorReceiverLatency}" HorizontalAlignment="Right"/>
+            </DockPanel>
+            <DockPanel Margin="0,0,0,12">
+              <TextBlock Text="{loc:Text 'Local capture delay'}" Style="{StaticResource Hint}"/>
+              <TextBlock Text="{Binding App.MonitorLocalDelay}" HorizontalAlignment="Right"/>
+            </DockPanel>
+            <DockPanel Margin="0,0,0,12">
+              <TextBlock Text="{loc:Text 'Measured network round trip'}" Style="{StaticResource Hint}"/>
+              <TextBlock Text="{Binding App.MonitorNetworkRtt}" HorizontalAlignment="Right"/>
+            </DockPanel>
             <DockPanel>
-              <TextBlock Text="{loc:Text 'End-to-end acoustic latency'}" Style="{StaticResource Hint}"/>
-              <TextBlock Text="{loc:Text 'Not measured'}" HorizontalAlignment="Right"/>
+              <TextBlock Text="{loc:Text 'Estimated audible delay'}" Style="{StaticResource Hint}"/>
+              <TextBlock Text="{Binding App.MonitorEstimatedLatency}" HorizontalAlignment="Right"/>
             </DockPanel>
           </StackPanel>
         </Border>
@@ -295,7 +311,7 @@
             </Expander>
           </StackPanel>
         </Border>
-        <TextBlock Text="{loc:Text 'Local queue and transport statistics update about once per second. Resent packets are sent, not confirmed received. Delay parameters are not acoustic measurements. The last failure snapshot survives reconnection.'}" Style="{StaticResource Hint}"/>
+        <TextBlock Text="{loc:Text 'Local queue and transport statistics update about once per second. Resent packets are sent, not confirmed received. The estimated audible delay is assembled from the receiver-reported jitter buffer, the measured local capture delay and half the measured feedback round trip; it is an estimate, not an acoustic measurement. The last failure snapshot survives reconnection.'}" Style="{StaticResource Hint}"/>
       </StackPanel>
     </DataTemplate>
     <DataTemplate x:Key="Page6">

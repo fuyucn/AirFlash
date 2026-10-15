@@ -209,6 +209,13 @@ internal static class UiSmoke
                 settings.Show();
             }
             Check(app.MonitorMembers.Count == 1 && app.MonitorRecoveries == "2", "transport metrics reach monitoring view", checks);
+            // The fixture uses default settings (200 ms profile) and reports a 150 ms receiver buffer,
+            // a 10.8 ms capture delay and a 4.2 ms round trip.
+            Check(app.MonitorTargetLatency == "200 ms", "monitor shows the configured target latency", checks);
+            Check(app.MonitorReceiverLatency.Contains("150") && app.MonitorReceiverLatency.Contains("requested"), "monitor labels an unreported receiver buffer as requested", checks);
+            Check(app.MonitorLocalDelay == "10.8 ms", "monitor shows the measured local capture delay", checks);
+            Check(app.MonitorNetworkRtt == "4.2 ms", "monitor shows the measured feedback round trip", checks);
+            Check(app.MonitorEstimatedLatency.Contains("163") && app.MonitorEstimatedLatency.Contains("buffer 150") && app.MonitorEstimatedLatency.Contains("capture 11") && app.MonitorEstimatedLatency.Contains("network 2"), "monitor estimate sums the observed parts", checks);
             checks.Add("eight pages rendered in light/dark; panel at 100/125/150/175/200 percent");
             await app.StopAsync(); await Until(() => app.Snapshot.State == PlaybackState.Idle);
             settings.Hide(); panel.ShowPanel(); await Pump();

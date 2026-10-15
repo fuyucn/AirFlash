@@ -58,6 +58,38 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
     public string MonitorReconnects => _snapshot.Diagnostics?.ReconnectCount.ToString() ?? "—";
     public string MonitorSessionUptime => _snapshot.Diagnostics?.Transport?.SessionUptimeMs is { } ms ? TimeSpan.FromMilliseconds(ms).ToString(@"d\.hh\:mm\:ss") : "—";
     public string MonitorWarnings => _snapshot.Diagnostics?.Warnings is { Count: > 0 } warnings ? string.Join("\n", warnings.Select(w => w.Detail)) : "—";
+    /// <summary>Latency parts measured for the active session.</summary>
+    private LatencyEstimate Latency => LatencyEstimate.From(_snapshot.TargetLatency, _snapshot.Metrics, _snapshot.Diagnostics?.Transport);
+    /// <summary>Configured target latency for the active receiver.</summary>
+    public string MonitorTargetLatency => Latency.Target is { } target ? $"{target:F0} ms" : "—";
+    /// <summary>
+    /// The jitter buffer the receiver uses. A receiver that does not report one
+    /// falls back to the requested value, labelled as requested, not measured.
+    /// </summary>
+    public string MonitorReceiverLatency => Latency.JitterBuffer is not { } ms
+        ? "—"
+        : Latency.JitterBufferEstimated
+            ? L.Format("{0:F0} ms · requested, not receiver-reported", ms)
+            : L.Format("{0:F0} ms · receiver-reported", ms);
+    /// <summary>Measured local capture-queue delay, the sender's own contribution.</summary>
+    public string MonitorLocalDelay => Latency.CaptureDelay is { } ms ? $"{ms:F1} ms" : "—";
+    /// <summary>Measured round trip of the AirPlay feedback request, not a one-way delay.</summary>
+    public string MonitorNetworkRtt => Latency.NetworkRoundTrip is { } rtt ? $"{rtt:F1} ms" : "—";
+    /// <summary>
+    /// Estimated audible delay with its contributing parts. This is an estimate
+    /// assembled from measured parts, not an acoustic measurement.
+    /// </summary>
+    public string MonitorEstimatedLatency
+    {
+        get
+        {
+            if (Latency.Total is not { } total) return "—";
+            var parts = new List<string> { L.Format("buffer {0:F0}", Latency.JitterBuffer ?? 0) };
+            if (Latency.CaptureDelay is { } capture) parts.Add(L.Format("capture {0:F0}", capture));
+            if (Latency.NetworkRoundTrip is { } rtt) parts.Add(L.Format("network {0:F0}", rtt / 2));
+            return L.Format("≈ {0:F0} ms", total) + "  ·  " + string.Join(" + ", parts);
+        }
+    }
     public string MonitorLastFault => _snapshot.Diagnostics?.LastFault?.Detail ?? "—";
     public ObservableCollection<TransportMemberViewModel> MonitorMembers { get; } = [];
     public string MonitorBeforeFault
@@ -343,6 +375,9 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
             [nameof(MonitorRecoveries)] = MonitorRecoveries,
             [nameof(MonitorSkipped)] = MonitorSkipped, [nameof(MonitorReconnects)] = MonitorReconnects,
             [nameof(MonitorSessionUptime)] = MonitorSessionUptime, [nameof(MonitorWarnings)] = MonitorWarnings,
+            [nameof(MonitorTargetLatency)] = MonitorTargetLatency, [nameof(MonitorReceiverLatency)] = MonitorReceiverLatency,
+            [nameof(MonitorLocalDelay)] = MonitorLocalDelay, [nameof(MonitorNetworkRtt)] = MonitorNetworkRtt,
+            [nameof(MonitorEstimatedLatency)] = MonitorEstimatedLatency,
             [nameof(MonitorLastFault)] = MonitorLastFault, [nameof(MonitorBeforeFault)] = MonitorBeforeFault
         };
         foreach (var (name, value) in values)

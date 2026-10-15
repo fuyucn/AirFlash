@@ -102,4 +102,29 @@ profile.
 Automated coverage: `cargo test` in `native/airflash-engine` exercises the backlog
 bound, the retain-and-drain path, the hard-failure and watchdog paths, and the
 latency-slot arithmetic. `dotnet test desktop/AirFlash.sln` covers the desktop
-metric parsing. Neither replaces a real HomePod or the affected network.
+metric parsing and the latency estimate. Neither replaces a real HomePod or the
+affected network.
+
+## Reported latency
+
+The Monitor page states each latency component separately instead of a single
+unqualified number, because only some of them are measured:
+
+| Field | Source | Nature |
+| --- | --- | --- |
+| Target latency | The selected profile | Configured, not measured |
+| Receiver jitter buffer | `latencyMin` returned by the receiver in SETUP | Receiver-reported |
+| Local capture delay | `capture_to_send_p95_ms` from the WASAPI capture queue | Measured locally |
+| Measured network round trip | AirPlay feedback request round trip | Measured |
+| Estimated audible delay | Buffer + capture delay + half the round trip | Estimate |
+
+The engine already received the receiver's `latencyMin` during SETUP but only
+reported it inside a per-member text summary. The estimate is computed by
+`LatencyEstimate.From`, which sums only observed parts, so a missing measurement
+lowers the total instead of inventing a value. When the receiver does not report
+a buffer, the requested profile is used and labelled "requested, not
+receiver-reported".
+
+The estimate excludes the receiver's own output path and any host processing
+before capture, so it is not an acoustic measurement. This is why the page keeps
+the label "estimated" rather than "measured".
