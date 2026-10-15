@@ -878,7 +878,7 @@ mod backlog_tests {
     #[test]
     fn backlog_is_bounded_by_the_jitter_budget() {
         let mut t = transport(Duration::from_millis(200));
-        let limit = t.backlog_limit() as usize;
+        let limit = t.backlog_limit();
         assert!(limit > 0 && limit < 25, "limit {limit} must leave headroom");
         for _ in 0..limit + 10 {
             t.enqueue_media(vec![0; 1428]);
