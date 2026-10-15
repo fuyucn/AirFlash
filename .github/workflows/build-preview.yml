@@ -29,6 +29,11 @@ jobs:
         with:
           version: '0.8.22'
           python-version: '3.12'
+      - name: Sync Python environment
+        shell: pwsh
+        run: |
+          uv sync --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Native checks and build
         shell: pwsh
         run: ./scripts/build-native.ps1 -Check
