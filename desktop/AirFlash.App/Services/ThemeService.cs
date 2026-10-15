@@ -16,11 +16,15 @@ internal sealed record ThemePalette(
     Color AccentText,
     Color AccentForeground,
     Color Caption,
-    Color CaptionText)
+    Color CaptionText,
+    Color Edge,
+    Color Elevated,
+    Color Warning,
+    Color Success)
 {
     public static ThemePalette For(bool dark) => dark
-        ? new(true, ColorOf("#141B27"), ColorOf("#202A3B"), ColorOf("#EEF3FC"), ColorOf("#AEBBD0"), ColorOf("#354157"), ColorOf("#78A9FF"), ColorOf("#253B5C"), ColorOf("#FF9AA5"), ColorOf("#78A9FF"), ColorOf("#162239"), ColorOf("#253B5C"), ColorOf("#EEF3FC"))
-        : new(false, ColorOf("#F4F6FB"), ColorOf("#FFFFFF"), ColorOf("#162239"), ColorOf("#66748A"), ColorOf("#E0E6F0"), ColorOf("#2563EB"), ColorOf("#EAF1FF"), ColorOf("#C32D40"), ColorOf("#2563EB"), ColorOf("#FFFFFF"), ColorOf("#EAF1FF"), ColorOf("#162239"));
+        ? new(true, ColorOf("#10151F"), ColorOf("#1B2231"), ColorOf("#EEF3FC"), ColorOf("#AEBBD0"), ColorOf("#313D52"), ColorOf("#78A9FF"), ColorOf("#253B5C"), ColorOf("#FF9AA5"), ColorOf("#78A9FF"), ColorOf("#162239"), ColorOf("#253B5C"), ColorOf("#EEF3FC"), ColorOf("#3C4A63"), ColorOf("#232C3D"), ColorOf("#E0A458"), ColorOf("#5FD39A"))
+        : new(false, ColorOf("#F5F7FB"), ColorOf("#FFFFFF"), ColorOf("#162239"), ColorOf("#66748A"), ColorOf("#E3E8F1"), ColorOf("#2563EB"), ColorOf("#EAF1FF"), ColorOf("#C32D40"), ColorOf("#2563EB"), ColorOf("#FFFFFF"), ColorOf("#EAF1FF"), ColorOf("#162239"), ColorOf("#D3DBE8"), ColorOf("#FFFFFF"), ColorOf("#9A5B00"), ColorOf("#126B3E"));
 
     private static Color ColorOf(string value) => (Color)ColorConverter.ConvertFromString(value);
 }
@@ -72,6 +76,10 @@ public sealed class ThemeService : IDisposable
         SetBrush("AccentForegroundBrush", palette.AccentForeground);
         SetBrush("CaptionBrush", palette.Caption);
         SetBrush("CaptionTextBrush", palette.CaptionText);
+        SetBrush("EdgeBrush", palette.Edge);
+        SetBrush("ElevatedBrush", palette.Elevated);
+        SetBrush("WarningBrush", palette.Warning);
+        SetBrush("SuccessBrush", palette.Success);
 
         ApplyFluentResources(palette);
         ThemeChanged?.Invoke(palette);

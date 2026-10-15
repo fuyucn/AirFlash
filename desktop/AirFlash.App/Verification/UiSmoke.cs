@@ -216,6 +216,17 @@ internal static class UiSmoke
             Check(app.MonitorLocalDelay == "10.8 ms", "monitor shows the measured local capture delay", checks);
             Check(app.MonitorNetworkRtt == "4.2 ms", "monitor shows the measured feedback round trip", checks);
             Check(app.MonitorEstimatedLatency.Contains("163") && app.MonitorEstimatedLatency.Contains("buffer 150") && app.MonitorEstimatedLatency.Contains("capture 11") && app.MonitorEstimatedLatency.Contains("network 2"), "monitor estimate sums the observed parts", checks);
+            // The fixture reports one send error, so loss is present and the badge must say so.
+            Check(app.Health.Level == HealthLevel.Degraded, "monitor grades observed loss as degraded", checks);
+            Check(app.HealthLabel == L.Get("Degraded") && app.HealthReason.Length > 0, "health badge pairs a label with its reason", checks);
+            Check(app.MonitorTargetValue == "200" && app.MonitorRttValue == "4.2" && app.MonitorEstimatedValue == "163", "headline tiles expose bare figures for their units", checks);
+            Check(app.MonitorBacklogged == "—" && app.MonitorDroppedBacklog == "—", "absent backpressure counters stay unknown rather than zero", checks);
+            // The sampler records at most one sample per second, so only the first is
+            // deterministic here; the accumulation rules are covered by unit tests.
+            Check(app.History.Count >= 1, "monitor records a sample while visible", checks);
+            Check(app.LatencyTrend.Count == app.History.Count && app.LatencyTrend.Any(v => v is not null), "trend exposes the recorded samples", checks);
+            Check(app.TrendSpan == "—" || app.TrendSpan.EndsWith(" s"), "trend reports a time span once it spans one", checks);
+            checks.Add("monitor health badge, headline tiles and trend wiring verified");
             checks.Add("eight pages rendered in light/dark; panel at 100/125/150/175/200 percent");
             await app.StopAsync(); await Until(() => app.Snapshot.State == PlaybackState.Idle);
             settings.Hide(); panel.ShowPanel(); await Pump();

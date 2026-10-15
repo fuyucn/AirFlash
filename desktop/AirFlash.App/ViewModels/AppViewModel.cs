@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Windows;
+using System.Windows.Media;
 using System.Windows.Threading;
 using AirFlash.App.Services;
 using AirFlash.Core;
@@ -34,6 +37,9 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
     private Task? _disposeTask;
     private bool _monitorVisible;
     private readonly Dictionary<string, string> _monitorValues = [];
+    private readonly MonitorHistory _history = new();
+    private readonly Stopwatch _sessionClock = new();
+    private long _lastSampleSeconds = -1;
     public EndpointCatalog Endpoints { get; }
     public bool IsClosing => _closing;
     public SessionController Session { get; }
@@ -60,6 +66,69 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
     public string MonitorWarnings => _snapshot.Diagnostics?.Warnings is { Count: > 0 } warnings ? string.Join("\n", warnings.Select(w => w.Detail)) : "—";
     /// <summary>Latency parts measured for the active session.</summary>
     private LatencyEstimate Latency => LatencyEstimate.From(_snapshot.TargetLatency, _snapshot.Metrics, _snapshot.Diagnostics?.Transport);
+    /// <summary>Whether the stream is healthy, judged only from observable loss.</summary>
+    public StreamHealth Health => StreamHealth.Evaluate(_snapshot.State, _snapshot.Metrics, _snapshot.Diagnostics?.Transport,
+        _snapshot.Diagnostics?.Transport?.Members.Any(m => m.FeedbackDelayed == true) == true);
+    public string HealthReason => Health.Reason;
+    /// <summary>Localized health label; the level itself stays a stable identifier.</summary>
+    public string HealthLabel => L.Get(Health.Level switch
+    {
+        HealthLevel.Good => "Healthy",
+        HealthLevel.Attention => "Attention",
+        HealthLevel.Degraded => "Degraded",
+        _ => "Not playing"
+    });
+    /// <summary>Chip fill for the health badge. Always paired with a label, never colour alone.</summary>
+    public Brush HealthFill => Health.Level switch
+    {
+        HealthLevel.Good => Tint(SuccessBrushKey, 0x1F),
+        HealthLevel.Attention => Tint(WarningBrushKey, 0x1F),
+        HealthLevel.Degraded => Tint(ErrorBrushKey, 0x1F),
+        _ => (Brush)Application.Current.Resources["TintBrush"]
+    };
+    public Brush HealthAccent => Health.Level switch
+    {
+        HealthLevel.Good => (Brush)Application.Current.Resources[SuccessBrushKey],
+        HealthLevel.Attention => (Brush)Application.Current.Resources[WarningBrushKey],
+        HealthLevel.Degraded => (Brush)Application.Current.Resources[ErrorBrushKey],
+        _ => (Brush)Application.Current.Resources["MutedBrush"]
+    };
+    public Brush HealthInk => Health.Level == HealthLevel.Degraded
+        ? (Brush)Application.Current.Resources[ErrorBrushKey]
+        : (Brush)Application.Current.Resources["TextBrush"];
+    private const string SuccessBrushKey = "SuccessBrush", WarningBrushKey = "WarningBrush", ErrorBrushKey = "ErrorBrush";
+    private static Brush Tint(string key, byte alpha)
+    {
+        var color = ((SolidColorBrush)Application.Current.Resources[key]).Color;
+        var brush = new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
+        brush.Freeze();
+        return brush;
+    }
+    /// <summary>Rolling samples for the Monitor charts.</summary>
+    public MonitorHistory History => _history;
+    public IReadOnlyList<double?> LatencyTrend => _history.Values(MonitorSeries.Latency);
+    public IReadOnlyList<double?> RoundTripTrend => _history.Values(MonitorSeries.RoundTrip);
+    public IReadOnlyList<double?> CaptureTrend => _history.Values(MonitorSeries.Capture);
+    public IReadOnlyList<double?> BacklogTrend => _history.Values(MonitorSeries.Backlog);
+    public bool HasTrend => _history.Count >= 2;
+    /// <summary>Seconds of history retained, shown as the chart's time span.</summary>
+    public string TrendSpan => _history.Count < 2 ? "—" : $"{_history.SpanSeconds:F0} s";
+    /// <summary>Record one sample per second so a fast refresh cannot distort the trend.</summary>
+    private void SampleHistory()
+    {
+        if (_snapshot.State is not (PlaybackState.Streaming or PlaybackState.Standby))
+        {
+            if (_sessionClock.IsRunning) { _sessionClock.Reset(); _lastSampleSeconds = -1; _history.Clear(); }
+            return;
+        }
+        if (!_sessionClock.IsRunning) { _sessionClock.Restart(); _lastSampleSeconds = -1; }
+        var seconds = Math.Floor(_sessionClock.Elapsed.TotalSeconds);
+        if (seconds == _lastSampleSeconds) return;
+        _lastSampleSeconds = (long)seconds;
+        var members = _snapshot.Diagnostics?.Transport?.Members ?? [];
+        _history.Add(new MonitorSample(seconds, Latency.JitterBuffer, Latency.NetworkRoundTrip, Latency.CaptureDelay,
+            members.Any(m => m.BacklogPackets is not null) ? members.Sum(m => m.BacklogPackets ?? 0) : null));
+    }
     /// <summary>Configured target latency for the active receiver.</summary>
     public string MonitorTargetLatency => Latency.Target is { } target ? $"{target:F0} ms" : "—";
     /// <summary>
@@ -90,6 +159,28 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
             return L.Format("≈ {0:F0} ms", total) + "  ·  " + string.Join(" + ", parts);
         }
     }
+    /// <summary>Bare figure for the headline tiles; the unit is rendered separately.</summary>
+    public string MonitorEstimatedValue => Latency.Total is { } total ? $"{total:F0}" : "—";
+    public string MonitorEstimatedParts => Latency.Total is null ? L.Get("Waiting for samples") : string.Join(" + ", new[]
+    {
+        Latency.JitterBuffer is { } buffer ? L.Format("buffer {0:F0}", buffer) : null,
+        Latency.CaptureDelay is { } capture ? L.Format("capture {0:F0}", capture) : null,
+        Latency.NetworkRoundTrip is { } rtt ? L.Format("network {0:F0}", rtt / 2) : null,
+    }.Where(part => part is not null));
+    public string MonitorTargetValue => Latency.Target is { } target ? $"{target:F0}" : "—";
+    /// <summary>States where the target came from, so a requested value is never read as measured.</summary>
+    public string MonitorTargetSource => Latency.Target is null
+        ? L.Get("No receiver selected")
+        : Latency.JitterBufferEstimated ? L.Get("Requested; receiver reported none") : L.Get("Profile in use");
+    public string MonitorRttValue => Latency.NetworkRoundTrip is { } rtt ? $"{rtt:F1}" : "—";
+    public string MonitorRttNote => Latency.NetworkRoundTrip is null ? L.Get("Waiting for feedback") : L.Get("Control channel round trip");
+    /// <summary>Target as a number for the chart's reference line.</summary>
+    public double? TargetLatencyValue => Latency.Target;
+    /// <summary>Counters that decide the health badge.</summary>
+    public string MonitorBacklogged => _snapshot.Diagnostics?.Transport?.Members.Any(m => m.Backlogged is not null) == true
+        ? _snapshot.Diagnostics.Transport.Members.Sum(m => m.Backlogged ?? 0).ToString() : "—";
+    public string MonitorDroppedBacklog => _snapshot.Diagnostics?.Transport?.Members.Any(m => m.Dropped is not null) == true
+        ? _snapshot.Diagnostics.Transport.Members.Sum(m => m.Dropped ?? 0).ToString() : "—";
     public string MonitorLastFault => _snapshot.Diagnostics?.LastFault?.Detail ?? "—";
     public ObservableCollection<TransportMemberViewModel> MonitorMembers { get; } = [];
     public string MonitorBeforeFault
@@ -367,6 +458,7 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
     }
     private void RefreshMonitor()
     {
+        SampleHistory();
         var values = new Dictionary<string, string>
         {
             [nameof(MonitorLatency)] = MonitorLatency, [nameof(MonitorQueue)] = MonitorQueue,
@@ -378,6 +470,15 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
             [nameof(MonitorTargetLatency)] = MonitorTargetLatency, [nameof(MonitorReceiverLatency)] = MonitorReceiverLatency,
             [nameof(MonitorLocalDelay)] = MonitorLocalDelay, [nameof(MonitorNetworkRtt)] = MonitorNetworkRtt,
             [nameof(MonitorEstimatedLatency)] = MonitorEstimatedLatency,
+            [nameof(Health)] = Health.Level.ToString(), [nameof(HealthReason)] = HealthReason,
+            [nameof(HealthLabel)] = HealthLabel,
+            [nameof(MonitorEstimatedValue)] = MonitorEstimatedValue, [nameof(MonitorEstimatedParts)] = MonitorEstimatedParts,
+            [nameof(MonitorTargetValue)] = MonitorTargetValue, [nameof(MonitorTargetSource)] = MonitorTargetSource,
+            [nameof(MonitorRttValue)] = MonitorRttValue, [nameof(MonitorRttNote)] = MonitorRttNote,
+            [nameof(MonitorBacklogged)] = MonitorBacklogged, [nameof(MonitorDroppedBacklog)] = MonitorDroppedBacklog,
+            [nameof(LatencyTrend)] = LatencyTrend.Count.ToString(), [nameof(RoundTripTrend)] = RoundTripTrend.Count.ToString(),
+            [nameof(CaptureTrend)] = CaptureTrend.Count.ToString(), [nameof(BacklogTrend)] = BacklogTrend.Count.ToString(),
+            [nameof(TrendSpan)] = TrendSpan, [nameof(HasTrend)] = HasTrend.ToString(),
             [nameof(MonitorLastFault)] = MonitorLastFault, [nameof(MonitorBeforeFault)] = MonitorBeforeFault
         };
         foreach (var (name, value) in values)
@@ -586,9 +687,18 @@ public sealed class ReceiverViewModel : ObservableObject
 public sealed class TransportMemberViewModel(MemberTransportMetrics metrics) : ObservableObject
 {
     public MemberTransportMetrics Metrics { get; private set; } = metrics;
-    public void Update(MemberTransportMetrics value) { if (Metrics == value) return; Metrics = value; Notify(nameof(Summary)); }
+    public void Update(MemberTransportMetrics value) { if (Metrics == value) return; Metrics = value; Notify(nameof(Summary)); Notify(nameof(Headline)); }
     public string Host => Metrics.Host;
     private static string Count(long? value) => value?.ToString() ?? "—";
+    /// <summary>One-line condition for the collapsed row, so detail can stay hidden.</summary>
+    public string Headline => string.Join(" · ", new[]
+    {
+        Metrics.ReceiverLatencyMs is { } latency ? $"{latency:F0} ms" : null,
+        Metrics.SendErrors is > 0 ? L.Format("{0} send errors", Metrics.SendErrors) : null,
+        Metrics.Dropped is > 0 ? L.Format("{0} dropped", Metrics.Dropped) : null,
+        Metrics.Backlogged is > 0 ? L.Format("{0} buffered", Metrics.Backlogged) : null,
+        Metrics.FeedbackRttMs is { } rtt ? $"{rtt:F1} ms RTT" : null,
+    }.Where(part => part is not null));
     public string Summary => string.Join("\n", new[]
     {
         L.Format("Packets sent: {0}; send errors: {1}; sync errors: {2}", Count(Metrics.PacketsSent), Count(Metrics.SendErrors), Count(Metrics.SyncErrors)),

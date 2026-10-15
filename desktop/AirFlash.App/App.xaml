@@ -20,7 +20,44 @@
       <SolidColorBrush x:Key="CaptionBrush" Color="#EAF1FF"/>
       <SolidColorBrush x:Key="CaptionTextBrush" Color="#162239"/>
       <SolidColorBrush x:Key="ErrorBrush" Color="#C32D40"/>
-      <FontFamily x:Key="BodyFont">Segoe UI, Microsoft YaHei UI</FontFamily>
+      <SolidColorBrush x:Key="WarningBrush" Color="#B26A00"/>
+      <SolidColorBrush x:Key="SuccessBrush" Color="#1B7F4B"/>
+      <SolidColorBrush x:Key="ElevatedBrush" Color="#FFFFFF"/>
+      <FontFamily x:Key="BodyFont">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI</FontFamily>
+      <!-- Display face for numerals and headings; falls back cleanly when absent. -->
+      <FontFamily x:Key="DisplayFont">Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI</FontFamily>
+      <!-- Motion: heavy, mass-simulating easing. No linear or ease-in-out. -->
+      <CubicEase x:Key="EaseOutHeavy" EasingMode="EaseOut"/>
+      <Duration x:Key="MotionFast">0:0:0.18</Duration>
+      <Duration x:Key="MotionBase">0:0:0.32</Duration>
+      <!-- Type scale. Tracking tightens as size grows, as in editorial setting. -->
+      <Style x:Key="Display" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DisplayFont}"/>
+        <Setter Property="FontSize" Value="40"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal"/>
+        <Setter Property="TextOptions.TextRenderingMode" Value="ClearType"/>
+      </Style>
+      <Style x:Key="Metric" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DisplayFont}"/>
+        <Setter Property="FontSize" Value="27"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal"/>
+      </Style>
+      <Style x:Key="MetricUnit" TargetType="TextBlock" BasedOn="{StaticResource Metric}">
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+        <Setter Property="Margin" Value="3,0,0,3"/>
+      </Style>
+      <Style x:Key="Eyebrow" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal"/>
+      </Style>
       <!-- Flat text menus explicitly use body typography, including when opened from an icon. -->
       <Style x:Key="TextMenuItem" TargetType="MenuItem">
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
@@ -268,12 +305,42 @@
         <Setter Property="ToolTipService.ShowDuration" Value="5000"/>
       </Style>
       <Style x:Key="Card" TargetType="Border">
+        <!--
+          Machined edge rather than a flat 1px grey rule: a lit hairline that
+          fades toward the base, plus a slightly lifted plate colour. Kept as a
+          border and a gradient instead of a DropShadowEffect because these cards
+          live inside a scrolling container, where a blur filter would force a
+          continuous repaint.
+        -->
+        <Setter Property="BorderBrush" Value="{DynamicResource EdgeBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+        <Setter Property="CornerRadius" Value="16"/>
+        <Setter Property="Padding" Value="22"/>
+        <Setter Property="Margin" Value="0,0,0,16"/>
+      </Style>
+      <!-- A metric tile: label above, large figure below, optional trend line. -->
+      <Style x:Key="MetricTile" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="10"/>
-        <Setter Property="Padding" Value="18"/>
-        <Setter Property="Margin" Value="0,0,0,14"/>
+        <Setter Property="CornerRadius" Value="14"/>
+        <Setter Property="Padding" Value="16"/>
+        <Setter Property="Margin" Value="0,0,12,12"/>
+        <Setter Property="MinHeight" Value="104"/>
+      </Style>
+      <!-- Pill status chip. Colour is always paired with a text label. -->
+      <Style x:Key="Chip" TargetType="Border">
+        <Setter Property="CornerRadius" Value="999"/>
+        <Setter Property="Padding" Value="9,4"/>
+        <Setter Property="Background" Value="{DynamicResource TintBrush}"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+      </Style>
+      <!-- Hairline divider that reads as machined rather than drawn. -->
+      <Style x:Key="Hairline" TargetType="Border">
+        <Setter Property="Height" Value="1"/>
+        <Setter Property="Background" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="Margin" Value="0,10"/>
       </Style>
       <Style TargetType="ComboBoxItem">
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
