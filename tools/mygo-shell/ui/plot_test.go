@@ -9,9 +9,11 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 )
 
-func TestBucketsKeepsASpike(t *testing.T) {
-	// Averaging would erase the one reading that matters, so a bucket keeps its
-	// extreme rather than its mean.
+func TestBucketsKeepsASpikeAsAMark(t *testing.T) {
+	// A spike is the one reading worth seeing, so it has to survive the
+	// reduction. It is carried as a mark on the step rather than as the height
+	// the step sits at: a peak made the whole step jump to it, which is what
+	// turned the chart into a zigzag.
 	hist := make([]float64, 100)
 	for i := range hist {
 		hist[i] = 10
@@ -23,13 +25,54 @@ func TestBucketsKeepsASpike(t *testing.T) {
 		t.Fatalf("got %d buckets, want 10", len(got))
 	}
 	var peak float64
-	for _, v := range got {
-		if v > peak {
-			peak = v
+	for _, b := range got {
+		if b.Peak > peak {
+			peak = b.Peak
 		}
 	}
 	if peak != 500 {
-		t.Errorf("peak = %v, want 500: the spike was averaged away", peak)
+		t.Errorf("peak = %v, want 500: the spike was lost", peak)
+	}
+	// And the step it sits in still reports an ordinary mean, so the line does
+	// not leap to it.
+	spikeStep := -1
+	for i, b := range got {
+		if b.Peak > 100 {
+			spikeStep = i
+			if b.Mean > 100 {
+				t.Errorf("step %d sits at %.0f, want an ordinary mean: the peak belongs to a mark, not the line", i, b.Mean)
+			}
+		}
+	}
+	if spikeStep < 0 {
+		t.Error("no step reported the spike")
+	}
+}
+
+func TestBucketsReturnsTheMeanForTheLine(t *testing.T) {
+	// The line is drawn from the means, and steps that differ only in one brief
+	// reading should not differ in the line. This is the jaggedness the user
+	// saw: a few milliseconds of jitter became the height of a whole step.
+	flat := make([]float64, 100)
+	for i := range flat {
+		flat[i] = 480
+	}
+	// Same series, one reading a little high in each step.
+	jittery := append([]float64(nil), flat...)
+	for i := 0; i < len(jittery); i += 10 {
+		jittery[i] += 6
+	}
+
+	one, two := buckets(flat, 20), buckets(jittery, 20)
+	if len(one) != len(two) {
+		t.Fatalf("got %d and %d buckets, want the same count", len(one), len(two))
+	}
+	for i := range one {
+		// A 6 ms reading in a step of 480 s should not move the line more than a
+		// fraction of a millisecond.
+		if d := one[i].Mean - two[i].Mean; d > 5 || d < -5 {
+			t.Errorf("step %d moved %.0f ms, want the line not to jump for a brief reading", i, d)
+		}
 	}
 }
 

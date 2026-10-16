@@ -439,35 +439,72 @@ func plotRange(hist []float64, target float64) (lo, hi float64) {
 // points in a few hundred pixels: drawn one per point the line becomes a picket
 // fence and says nothing. Each bucket keeps its own extreme, so a spike still
 // shows rather than being averaged away.
-func buckets(hist []float64, width float32) []float64 {
+// bucket is one step of a reduced series.
+//
+// The mean is what the line is drawn from, and the extremes are carried beside
+// it so a spike can be marked without being folded into the line.
+type bucket struct {
+	// Mean is the average reading of the step: what a step-wise line sits at.
+	Mean float64
+	// Peak is the highest reading in the step.
+	Peak float64
+	// Base is the lowest reading in the step.
+	Base float64
+}
+
+// buckets reduces a series to about as many steps as the plot has pixels to
+// show them in.
+//
+// A reading arrives four times a second, so a few minutes is hundreds of points
+// in a few hundred pixels: drawn one per point the line becomes a picket fence
+// and says nothing. Each step's mean is what the line is drawn from.
+//
+// The mean rather than the step's peak, which is what this did before: a peak
+// made every step jump to the height of whatever brief reading sat in it, and
+// the chart read as a zigzag. A mean still shows the drift, which is what the
+// chart is for, and the peaks are marked separately so a spike survives.
+func buckets(hist []float64, width float32) []bucket {
 	want := int(width)
 	if want < 8 {
 		want = 8
 	}
-	if len(hist) <= want {
-		return hist
-	}
-	size := float64(len(hist)) / float64(want)
-	out := make([]float64, 0, want)
-	for i := 0; i < want; i++ {
-		lo := int(float64(i) * size)
-		hi := int(float64(i+1) * size)
-		if hi > len(hist) {
-			hi = len(hist)
-		}
-		if lo >= hi {
-			continue
-		}
-		// The extreme rather than the mean: a spike is the thing worth seeing.
-		peak := hist[lo]
-		for _, v := range hist[lo:hi] {
-			if v > peak {
-				peak = v
+	reduce := func() []bucket {
+		out := make([]bucket, 0, want)
+		size := float64(len(hist)) / float64(want)
+		for i := 0; i < want; i++ {
+			lo := int(float64(i) * size)
+			hi := int(float64(i+1) * size)
+			if hi > len(hist) {
+				hi = len(hist)
 			}
+			if lo >= hi {
+				continue
+			}
+			sum, peak, base := 0.0, hist[lo], hist[lo]
+			for _, v := range hist[lo:hi] {
+				sum += v
+				if v > peak {
+					peak = v
+				}
+				if v < base {
+					base = v
+				}
+			}
+			out = append(out, bucket{Mean: sum / float64(hi-lo), Peak: peak, Base: base})
 		}
-		out = append(out, peak)
+		return out
 	}
-	return out
+
+	if len(hist) <= want {
+		// Fewer points than pixels needs no reduction, but the same shape is
+		// returned so callers read one type whatever the length of the series.
+		out := make([]bucket, 0, len(hist))
+		for _, v := range hist {
+			out = append(out, bucket{Mean: v, Peak: v, Base: v})
+		}
+		return out
+	}
+	return reduce()
 }
 
 // drawLatencyPlot draws the series and the target reference.
@@ -480,12 +517,14 @@ func drawLatencyPlot(pt *ui.Painter, r ui.Rect, p palette, hist []float64, targe
 		return
 	}
 	series := buckets(hist, r.W/9)
-	lo, hi := plotRange(series, target)
+	lo, hi := plotRange(means(series), target)
 	yOf := func(v float64) float32 {
 		f := (v - lo) / (hi - lo)
 		return r.Y + r.H - float32(f)*r.H
 	}
 
+	// The reference the drift is judged against, in the muted ink: it is the line
+	// everything is compared to, so it has to be visible rather than a hairline.
 	ty := yOf(target)
 	pt.Line(r.X, ty, r.X+r.W, ty, 1, p.InkMuted)
 
@@ -494,21 +533,34 @@ func drawLatencyPlot(pt *ui.Painter, r ui.Rect, p palette, hist []float64, targe
 	}
 	step := r.W / float32(len(series)-1)
 
-	// The over-target marks first, so the line reads on top of them.
-	for i, v := range series {
-		if v <= target {
+	// A step whose readings went over the target carries a mark from its mean up
+	// to its peak. Drawn first, so the line reads on top of them.
+	for i, b := range series {
+		if b.Peak <= target {
 			continue
 		}
 		x := r.X + float32(i)*step
-		pt.Line(x, yOf(v), x, ty, 1, p.Danger)
+		pt.Line(x, yOf(b.Peak), x, max(yOf(b.Mean), ty), 1, p.Danger)
 	}
 
-	prevX, prevY := r.X, yOf(series[0])
+	prevX, prevY := r.X, yOf(series[0].Mean)
 	for i := 1; i < len(series); i++ {
-		x, y := r.X+float32(i)*step, yOf(series[i])
+		x, y := r.X+float32(i)*step, yOf(series[i].Mean)
 		pt.Line(prevX, prevY, x, y, 1.5, p.Accent)
 		prevX, prevY = x, y
 	}
+}
+
+// means is the series a plot ranges over: the step means, which is what the line
+// is drawn from. A peak is a mark, not the line, so it does not stretch the
+// range: one brief reading would flatten the drift it was meant to stand out
+// from.
+func means(series []bucket) []float64 {
+	out := make([]float64, len(series))
+	for i, b := range series {
+		out[i] = b.Mean
+	}
+	return out
 }
 
 // adapted is what the shell worked out from previous sessions.
