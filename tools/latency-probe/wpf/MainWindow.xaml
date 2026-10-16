@@ -1,0 +1,30 @@
+<Window x:Class="WpfProbe.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AirFlash Probe (WPF)" Height="620" Width="900">
+  <Grid Margin="20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <TextBlock Grid.Row="0" Text="AirFlash Probe - WPF" FontSize="22" FontWeight="Bold" />
+    <TextBlock Grid.Row="1" x:Name="EnvText" Margin="0,4,0,0" FontSize="13" Foreground="#666" />
+
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,14,0,0">
+      <Button x:Name="RunIdle" Content="Run (no load)" Padding="12,6" Margin="0,0,8,0" Click="RunIdle_Click" />
+      <Button x:Name="RunBurn" Content="Run (all cores)" Padding="12,6" Margin="0,0,8,0" Click="RunBurn_Click" />
+      <Button x:Name="StopBtn" Content="Stop" Padding="12,6" Click="Stop_Click" />
+    </StackPanel>
+
+    <StackPanel Grid.Row="3" Margin="0,14,0,0">
+      <TextBlock x:Name="StatsText" FontSize="15" Text="idle" />
+      <TextBlock x:Name="StatusText" FontSize="12" Foreground="#666" Margin="0,2,0,0" Text="" />
+    </StackPanel>
+
+    <Canvas Grid.Row="4" x:Name="Chart" Margin="0,12,0,0" ClipToBounds="True" />
+  </Grid>
+</Window>
