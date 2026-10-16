@@ -37,12 +37,19 @@ func main() {
 	st.Apply(engine.Event{Event: "streaming", Raw: []byte(
 		`{"event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"clk","members":1}`)})
 
+	// Real latency drifts; it does not jump randomly at every sample. A random
+	// walk is what the chart will actually be shown, so that is what this
+	// renders.
 	seed := 7
-	for i := 0; i < 90; i++ {
+	rnd := func() float64 {
 		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		jitter := float64(seed%90) - 40 // receiver buffer wobble
-		rtt := 18.0 + float64(seed%55)  // the network's round trip
-		buffer := 470.0 + jitter
+		return float64(seed)/float64(0x7fffffff) - 0.5
+	}
+	walk := 0.0
+	for i := 0; i < 90; i++ {
+		walk = walk*0.85 + rnd()*14 // drift with a slow pull back
+		buffer := 500 + walk
+		rtt := 20 + rnd()*8
 		body := fmt.Sprintf(`{"event":"transport_metrics","session_uptime_ms":%d,
 		  "sender_late_recoveries":0,"skipped_packets":0,"max_send_lateness_us":900,
 		  "members":[{"host":"10.0.10.31",
@@ -71,7 +78,7 @@ func main() {
 
 	mygo.App.WhenReady(func() {
 		mygo.NewWindow(mygo.WindowOptions{
-			Title: "AirFlash", Width: 980, Height: 680,
+			Title: "AirFlash", Width: 1040, Height: 720,
 			BackgroundColor: "light-dark(#F2F2F7, #1C1C1E)",
 			Content:         ui.View(view.View),
 		})

@@ -38,11 +38,11 @@ type palette struct {
 // running text at 16px or more. Five steps is the ceiling, so every size in the
 // interface maps onto one of these.
 const (
-	sizeSmall  float32 = 13 // labels, secondary notes
-	sizeBody   float32 = 16 // running text
-	sizeLead   float32 = 19 // a short statement
-	sizeFigure float32 = 44 // the headline numbers
-	sizeTitle  float32 = 22 // a page's one large line
+	sizeSmall float32 = 13 // labels, secondary notes
+	sizeBody  float32 = 16 // running text
+	sizeLead  float32 = 19 // a short statement
+	sizeTitle float32 = 22 // a section heading
+	sizeHero  float32 = 52 // the one figure the window is about
 )
 
 // light is the daylight appearance.
@@ -85,6 +85,35 @@ func forDark(isDark bool) palette {
 		return dark()
 	}
 	return light()
+}
+
+// themeFor turns the palette into the framework's theme, so the widgets the
+// framework draws - sliders, switches, segmented controls, focus rings - use
+// the same colours as the rest of the window. Without this the widgets keep
+// the framework's own blue while everything else is the palette's teal, which
+// reads as two applications sharing a window.
+func themeFor(p palette, isDark bool) *ui.Theme {
+	return &ui.Theme{
+		Dark:           isDark,
+		Background:     p.Ground,
+		Surface:        p.Surface,
+		SurfaceHover:   p.SurfaceHi,
+		SurfacePressed: p.SurfaceHi,
+		Border:         p.Hairline,
+		Text:           p.Ink,
+		TextMuted:      p.InkMuted,
+		Accent:         p.Accent,
+		AccentHover:    p.Accent,
+		AccentPressed:  p.Accent,
+		AccentText:     p.AccentText,
+		Danger:         p.Danger,
+		Warning:        p.Warning,
+		Success:        p.Success,
+		Selection:      p.Accent,
+		Focus:          p.Accent,
+		Scrollbar:      p.Hairline,
+		Radius:         8,
+	}
 }
 
 // latencyBand describes a measured latency in words and a colour. It never

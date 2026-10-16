@@ -72,3 +72,47 @@ This is a **desktop app designed with a web-page skill's rules**, and the
 automated half of that skill cannot check it. Every judgement above came from
 looking at screenshots of the running window. Where the skill's process could
 not run, this file says so rather than implying it did.
+
+
+---
+
+# Second pass: making it feel native
+
+The first pass still looked like a web dashboard wearing a desktop window. The
+`native-feel-cross-platform-desktop` audit named why, and this pass fixes each
+item. Its central tenet is T3: *adopt the platform; don't compete with it.*
+
+## What was wrong, and what replaced it
+
+| Looked like a web app | What it is now | Why |
+| --- | --- | --- |
+| A hand-drawn "Stats" title bar inside the window | Removed | The window already has a title bar the platform draws, drags and matches to the rest of the system. A second one competes with it. |
+| Four cards stacked down the page | One surface, sections separated by space | A window is already a surface. Cards inside a window are a dashboard idiom. |
+| Three big numbers in a row, each in its own box | One headline figure, then label-and-value rows | A system inspector lists label and value; the eye compares down a column, so the values are right-aligned to one edge. |
+| 90 thin bars in the chart | A line, downsampled to about one point per 9 px, keeping each bucket's peak | A reading every 250 ms in a 540-px plot is a picket fence and says nothing. |
+| The framework's blue sliders next to a teal interface | The framework's theme is set to the palette | Two accents in one window reads as two applications. |
+| `Fill()` on the scroll view | `Grow(1)` | `Fill` asks for the parent's whole height, which pushed the content up out of the window. |
+| Eleven- and twelve-pixel labels | Thirteen and sixteen | The house rules' floor. |
+
+## The bug the screenshots caught
+
+Setting the framework theme without carrying its `Dark` flag made the next frame
+read the wrong appearance: the sidebar turned light while the content stayed
+dark, and the navigation vanished into the background. Visible only in a
+screenshot; the code looked correct.
+
+## What the skill's audit still lists as unmet
+
+Honest gaps, from `references/06-native-conventions.md`:
+
+- **System accent colour.** mygo's theme is set from this app's palette, so the
+  accent is the design's teal rather than the user's chosen OS accent. Following
+  it would need a hook mygo does not expose on the native-UI path.
+- **Window remembers its size and position** — done, through `StateKey`.
+- **Single-instance behaviour on Windows** — not implemented. A second launch
+  currently starts a second app.
+- **Auto-update as a real process** — not implemented.
+- **Native context menu, native notifications** — not implemented; nothing in
+  the app opens a menu or notifies yet.
+- **Full keyboard navigation** — the framework provides Tab and arrow movement;
+  it has not been audited against this app's controls.
