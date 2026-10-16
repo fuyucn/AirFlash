@@ -31,12 +31,38 @@ func main() {
 	})
 	fmt.Fprintf(os.Stderr, "seeded %d receiver(s)\n", len(fake))
 
+	// Feed the view a running session with a latency series that jitters the
+	// way a real network does, so the chart can be looked at without a HomePod.
+	st := engine.NewState()
+	st.Apply(engine.Event{Event: "streaming", Raw: []byte(
+		`{"event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"clk","members":1}`)})
+
+	seed := 7
+	for i := 0; i < 90; i++ {
+		seed = (seed*1103515245 + 12345) & 0x7fffffff
+		jitter := float64(seed%90) - 40 // receiver buffer wobble
+		rtt := 18.0 + float64(seed%55)  // the network's round trip
+		buffer := 470.0 + jitter
+		body := fmt.Sprintf(`{"event":"transport_metrics","session_uptime_ms":%d,
+		  "sender_late_recoveries":0,"skipped_packets":0,"max_send_lateness_us":900,
+		  "members":[{"host":"10.0.10.31",
+		    "media":{"packets_sent":%d,"media_send_dropped":0,"retransmit_requests":%d,
+		      "retransmits_sent":%d,"retransmit_missing":0,"retransmit_expired":0,
+		      "retransmit_queue_drops":0,"receiver_latency_ms":%.1f,
+		      "receiver_latency_estimated":false,"media_backlog_packets":2,
+		      "media_backlog_limit_packets":47,"audio_send_buffer_bytes":65536},
+		    "health":{"feedback_rtt_ms":%.1f,"feedback_delayed":false}}]}`,
+			i*1000, i*125, i/10, i/10, buffer, rtt)
+		st.Apply(engine.Event{Event: "transport_metrics", Raw: []byte(body)})
+	}
+
 	view := appui.New(appui.Deps{
-		State:     engine.NewState(),
+		State:     st,
 		Settings:  cfg,
 		Life:      shell.New(),
 		Receivers: func() []discovery.Receiver { return fake },
 		OnPlay:    func(r discovery.Receiver) { fmt.Fprintf(os.Stderr, "play %s\n", r.Name) },
+		AdaptedMs: func() int { return 500 },
 	})
 
 	if len(os.Args) > 1 {

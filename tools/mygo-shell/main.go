@@ -21,6 +21,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/adapt"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
@@ -128,6 +129,10 @@ func (a *App) openWindow(cfg settings.Settings) {
 		OnLatency: func(ms int) {
 			a.settings.Update(func(s *settings.Settings) { s.LatencyMs = ms })
 		},
+		OnAuto: func(on bool) {
+			a.settings.Update(func(s *settings.Settings) { s.LatencyAuto = on })
+		},
+		AdaptedMs: a.adaptedTarget,
 		OnMode: func(m settings.Mode) {
 			a.settings.Update(func(s *settings.Settings) { s.Mode = m })
 			// The mode changes what the window draws, so rebuild it. Rebuilding
@@ -180,6 +185,62 @@ func (a *App) installTray() {
 		return
 	}
 	tray.OnClick(func() { a.openWindow(a.settings.Current()) })
+}
+
+// adaptedTarget is the latency the shell worked out from previous sessions.
+// It is only ever a suggestion: the user's setting is the floor.
+func (a *App) adaptedTarget() int {
+	cfg := a.settings.Current()
+	if !cfg.Adapt || len(cfg.Sessions) == 0 {
+		return cfg.LatencyMs
+	}
+	target, _ := adapt.Recommend(cfg.LatencyMs, observations(cfg.Sessions))
+	return target
+}
+
+// observations converts the stored sessions for the recommender.
+func observations(sessions []settings.Session) []adapt.Observation {
+	out := make([]adapt.Observation, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, adapt.Observation{
+			TargetMs:       s.TargetMs,
+			PeakRTTMs:      s.PeakRTTMs,
+			MedianRTTMs:    s.MedianRTTMs,
+			SenderStalls:   s.SenderStalls,
+			SkippedPackets: s.SkippedPackets,
+			ExpiredResends: s.ExpiredResends,
+			At:             s.At,
+		})
+	}
+	return out
+}
+
+// recordSession stores what a finished session turned out to be, so the next
+// one can learn from it. It runs when a stream stops, never during one.
+func (a *App) recordSession() {
+	peak, median := a.state.SessionRTT()
+	m := a.state.Snapshot()
+	cfg := a.settings.Current()
+
+	// A session that never measured anything has nothing to teach.
+	if peak == 0 && m.SenderLateRecoveries == 0 && m.SkippedPackets == 0 &&
+		m.RetransmitExpired == 0 {
+		a.state.ResetSession()
+		return
+	}
+
+	a.settings.Update(func(s *settings.Settings) {
+		s.Sessions = append(s.Sessions, settings.Session{
+			TargetMs:       cfg.EffectiveLatencyMs(a.adaptedTarget()),
+			PeakRTTMs:      peak,
+			MedianRTTMs:    median,
+			SenderStalls:   m.SenderLateRecoveries,
+			SkippedPackets: m.SkippedPackets,
+			ExpiredResends: m.RetransmitExpired,
+			At:             time.Now(),
+		})
+	})
+	a.state.ResetSession()
 }
 
 // startDiscovery browses for receivers while a window is open.
@@ -278,9 +339,11 @@ func (a *App) startStreamTo(peers []engine.Peer) {
 
 	cfg := a.settings.Current()
 	opts := engine.DefaultStreamOptions()
-	opts.LatencyMs = cfg.LatencyMs
+	// Auto, when it is on, raises the target from what the network did before.
+	opts.LatencyMs = cfg.EffectiveLatencyMs(a.adaptedTarget())
 	opts.Gain = cfg.Gain
 	opts.SampleRate = cfg.SampleRate
+	a.state.ResetSession()
 
 	if _, err := c.StartStream(peers, opts); err != nil {
 		log.Printf("start failed: %v", err)
@@ -292,6 +355,8 @@ func (a *App) stopStream() {
 	if c := a.client.Load(); c != nil {
 		_, _ = c.Stop()
 	}
+	// The session is over, so what it showed about the network is now known.
+	a.recordSession()
 }
 
 func (a *App) currentPeers() []engine.Peer {

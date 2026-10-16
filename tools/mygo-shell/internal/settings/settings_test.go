@@ -105,3 +105,60 @@ func TestStoreRoundTripsAndSurvivesABrokenFile(t *testing.T) {
 			broken.Current().LatencyMs, Default().LatencyMs)
 	}
 }
+
+func TestAutoNeverGoesBelowTheFloorTheUserSet(t *testing.T) {
+	// Auto means "you decide", not "ignore what I said". The setting is the
+	// fastest the user is willing to accept.
+	s := Default()
+	s.LatencyAuto = true
+	s.LatencyMs = 500
+
+	if got := s.EffectiveLatencyMs(300); got != 500 {
+		t.Errorf("target = %d, want the floor 500: Auto must not go faster than the user asked", got)
+	}
+}
+
+func TestAutoUsesTheAdaptedTargetWhenItIsHigher(t *testing.T) {
+	s := Default()
+	s.LatencyAuto = true
+	s.LatencyMs = 500
+
+	if got := s.EffectiveLatencyMs(800); got != 800 {
+		t.Errorf("target = %d, want the adapted 800", got)
+	}
+}
+
+func TestAutoFallsBackToTheSettingBeforeAnySession(t *testing.T) {
+	s := Default()
+	s.LatencyAuto = true
+	s.LatencyMs = 500
+
+	if got := s.EffectiveLatencyMs(0); got != 500 {
+		t.Errorf("target = %d, want the setting 500 when nothing has been learned yet", got)
+	}
+}
+
+func TestWithAutoOffTheSettingIsUsedExactly(t *testing.T) {
+	s := Default()
+	s.LatencyAuto = false
+	s.LatencyMs = 750
+
+	if got := s.EffectiveLatencyMs(1200); got != 750 {
+		t.Errorf("target = %d, want exactly the setting 750 when Auto is off", got)
+	}
+}
+
+func TestAutoIsOnByDefault(t *testing.T) {
+	// The point of the change: the user should not have to pick a number.
+	if !Default().LatencyAuto {
+		t.Error("Auto should be on by default")
+	}
+}
+
+func TestLatencyChoicesAreWithinWhatTheEngineAccepts(t *testing.T) {
+	for _, ms := range LatencyChoices() {
+		if ms < 200 || ms > 2000 {
+			t.Errorf("choice %d is outside the engine's 200..2000", ms)
+		}
+	}
+}

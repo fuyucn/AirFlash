@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // Mode is how much the shell spends on itself.
@@ -25,8 +26,13 @@ const (
 type Settings struct {
 	Mode Mode `json:"mode"`
 
-	// LatencyMs is the target the engine is asked for.
+	// LatencyMs is the target the engine is asked for when Auto is off, and the
+	// floor Auto will not go below when it is on.
 	LatencyMs int `json:"latency_ms"`
+
+	// LatencyAuto lets the shell choose the target from what the network
+	// actually did, instead of the user picking a number.
+	LatencyAuto bool `json:"latency_auto"`
 
 	// Gain is the master gain, 0..1.
 	Gain float64 `json:"gain"`
@@ -46,17 +52,38 @@ type Settings struct {
 
 	// LastPeer is the receiver to auto-connect to.
 	LastPeer string `json:"last_peer"`
+
+	// Adapt raises the target when a session showed a gap. It only ever moves
+	// the target at a session boundary, never during one.
+	Adapt bool `json:"adapt"`
+
+	// Sessions is what previous sessions turned out to be, newest last. It is
+	// how the shell knows whether the network is actually getting worse.
+	Sessions []Session `json:"sessions"`
+}
+
+// Session is one finished session, recorded so the next one can learn from it.
+type Session struct {
+	TargetMs       int       `json:"target_ms"`
+	PeakRTTMs      float64   `json:"peak_rtt_ms"`
+	MedianRTTMs    float64   `json:"median_rtt_ms"`
+	SenderStalls   uint64    `json:"sender_stalls"`
+	SkippedPackets uint64    `json:"skipped_packets"`
+	ExpiredResends uint64    `json:"expired_resends"`
+	At             time.Time `json:"at"`
 }
 
 // Default returns the starting settings: lightweight off, and a 500 ms target,
 // which is the value that made playback smooth on a first-generation HomePod.
 func Default() Settings {
 	return Settings{
-		Mode:       ModeStandard,
-		LatencyMs:  500,
-		Gain:       1.0,
-		SampleRate: 44100,
-		ShowTrend:  true,
+		Mode:        ModeStandard,
+		LatencyMs:   500,
+		Gain:        1.0,
+		SampleRate:  44100,
+		ShowTrend:   true,
+		Adapt:       true,
+		LatencyAuto: true,
 	}
 }
 
@@ -139,8 +166,34 @@ func (s Settings) normalized() Settings {
 		s.ShowTrend = false
 		s.ReducedMotion = true
 	}
+	if len(s.Sessions) > maxSessions {
+		s.Sessions = s.Sessions[len(s.Sessions)-maxSessions:]
+	}
 	return s
 }
+
+// maxSessions bounds the recorded history. Older sessions say less about the
+// network than recent ones, and an unbounded list would grow forever.
+const maxSessions = 50
+
+// EffectiveLatencyMs is the target to ask the engine for. With Auto on it is
+// what the shell worked out from previous sessions, never below the floor the
+// user set; with Auto off it is exactly what the user chose.
+func (s Settings) EffectiveLatencyMs(adapted int) int {
+	if !s.LatencyAuto {
+		return s.LatencyMs
+	}
+	if adapted <= 0 {
+		return s.LatencyMs
+	}
+	if adapted < s.LatencyMs {
+		return s.LatencyMs
+	}
+	return adapted
+}
+
+// LatencyChoices are the fixed targets offered beside Auto.
+func LatencyChoices() []int { return []int{200, 300, 500, 750, 1000} }
 
 // RedrawIntervalMs is how often the UI repaints a live reading.
 func (s Settings) RedrawIntervalMs() int {

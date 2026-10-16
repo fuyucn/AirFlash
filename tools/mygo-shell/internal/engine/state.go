@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 )
@@ -19,23 +20,95 @@ const (
 )
 
 // Metrics is the live picture the UI draws.
+//
+// The numbers here are the ones that explain a stutter: the receiver's own
+// playout buffer (what the user hears as delay), the feedback round trip (the
+// network's ping), and the counters that show packets being lost, retried or
+// dropped on the way out.
 type Metrics struct {
-	Phase        StreamPhase
-	Detail       string
-	RequestedMs  int
-	MeasuredMs   float64
-	HasMeasured  bool
-	PacketsSent  uint64
-	SendErrors   uint64
-	SendDelayed  uint64
-	MaxStallMs   float64
-	BacklogDrops uint64
-	SampleRate   int
-	ClockID      string
-	Updated      time.Time
+	Phase       StreamPhase
+	Detail      string
+	RequestedMs int
+	SampleRate  int
+	ClockID     string
+	Updated     time.Time
 
-	// Latency history feeds the trend chart, newest last.
+	// ReceiverBufferMs is the receiver's own playout delay. This is the
+	// largest part of what the user hears as latency.
+	ReceiverBufferMs        float64
+	HasReceiverBuffer       bool
+	ReceiverBufferEstimated bool
+
+	// NetworkRTTMs is the engine's feedback round trip: the network's ping.
+	NetworkRTTMs     float64
+	HasNetworkRTT    bool
+	FeedbackDelayed  bool
+	FeedbackFailures uint64
+
+	// TotalLatencyMs is the sum of the parts that were actually observed.
+	TotalLatencyMs  float64
+	HasTotalLatency bool
+
+	PacketsSent          uint64
+	MediaSendErrors      uint64
+	MediaBacklogged      uint64
+	MediaSendDropped     uint64
+	RetransmitRequests   uint64
+	RetransmitsSent      uint64
+	RetransmitMissing    uint64
+	RetransmitExpired    uint64
+	RetransmitQueueDrops uint64
+	BacklogPackets       int
+	BacklogLimit         int
+
+	// SenderLateRecoveries and SkippedPackets are the sender's own stalls: it
+	// fell behind and discarded expired audio. Each one is an audible gap.
+	SenderLateRecoveries uint64
+	SkippedPackets       uint64
+	MaxSendLatenessUs    uint64
+
+	// History feeds the trend chart, newest last.
 	History []float64
+
+	// SessionPeakRTTMs and rttSamples describe the round trip over the whole
+	// session. The peak is what a gap has to fit inside; the spread says
+	// whether the link is slow or erratic.
+	SessionPeakRTTMs float64
+	rttSamples       []float64
+}
+
+// SessionRTT returns the peak and median round trip of the session so far.
+// The median needs a few samples to mean anything, so an empty second value is
+// returned until then.
+func (s *State) SessionRTT() (peak, median float64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	peak = s.metrics.SessionPeakRTTMs
+	if len(s.metrics.rttSamples) == 0 {
+		return peak, 0
+	}
+	sorted := append([]float64(nil), s.metrics.rttSamples...)
+	sort.Float64s(sorted)
+	return peak, sorted[len(sorted)/2]
+}
+
+// ResetSession clears the per-session counters, so a new stream is judged on
+// its own numbers rather than the last one's.
+func (s *State) ResetSession() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.metrics.SessionPeakRTTMs = 0
+	s.metrics.rttSamples = nil
+	s.metrics.SenderLateRecoveries = 0
+	s.metrics.SkippedPackets = 0
+	s.metrics.RetransmitExpired = 0
+	s.metrics.RetransmitMissing = 0
+	s.metrics.RetransmitQueueDrops = 0
+	s.metrics.MediaSendDropped = 0
+	s.metrics.History = nil
+	s.metrics.HasTotalLatency = false
+	s.metrics.HasReceiverBuffer = false
+	s.metrics.HasNetworkRTT = false
 }
 
 // State is the shared, mutex-guarded app model.
@@ -128,36 +201,101 @@ func (s *State) Apply(ev Event) {
 	case "negotiated", "handshake_complete", "peer_info":
 		s.metrics.Phase = PhaseNegotiating
 	case "transport_metrics":
-		var tm struct {
-			Metrics TransportMetrics `json:"metrics"`
+		var tm TransportMetrics
+		if json.Unmarshal(ev.Raw, &tm) != nil {
+			break
 		}
-		if json.Unmarshal(ev.Raw, &tm) == nil {
-			m := tm.Metrics
-			s.metrics.PacketsSent = m.PacketsSent
-			s.metrics.SendErrors = m.SendErrors
-			s.metrics.SendDelayed = m.SendDelayed
-			s.metrics.BacklogDrops = m.BacklogDrops
-			if m.MaxStallMs > s.metrics.MaxStallMs {
-				s.metrics.MaxStallMs = m.MaxStallMs
+		s.metrics.SenderLateRecoveries = tm.SenderLateRecoveries
+		s.metrics.SkippedPackets = tm.SkippedPackets
+		s.metrics.MaxSendLatenessUs = tm.MaxSendLatenessUs
+
+		// With a stereo pair the deepest buffer bounds what is heard, and the
+		// worst round trip is the one that matters.
+		var deepest float64
+		var haveBuffer bool
+		var worstRTT float64
+		var haveRTT bool
+		var members int
+
+		for _, m := range tm.Members {
+			members++
+			if m.Media.ReceiverLatencyMs > deepest {
+				deepest = m.Media.ReceiverLatencyMs
+				haveBuffer = true
+				s.metrics.ReceiverBufferEstimated = m.Media.ReceiverLatencyEstimated
 			}
-			if m.MeasuredLatencyMs > 0 {
-				s.metrics.MeasuredMs = m.MeasuredLatencyMs
-				s.metrics.HasMeasured = true
-				s.metrics.History = append(s.metrics.History, m.MeasuredLatencyMs)
-				if len(s.metrics.History) > 180 {
-					s.metrics.History = s.metrics.History[len(s.metrics.History)-180:]
-				}
+			if m.Health.FeedbackRTTMs != nil && *m.Health.FeedbackRTTMs > worstRTT {
+				worstRTT = *m.Health.FeedbackRTTMs
+				haveRTT = true
+			}
+			s.metrics.FeedbackDelayed = s.metrics.FeedbackDelayed || m.Health.FeedbackDelayed
+			s.metrics.FeedbackFailures += m.Health.FeedbackFailures
+
+			// Sum the counters across members: a pair sends to both halves.
+			s.metrics.PacketsSent += m.Media.PacketsSent
+			s.metrics.MediaSendErrors += m.Media.MediaSendErrors
+			s.metrics.MediaBacklogged += m.Media.MediaSendBacklogged
+			s.metrics.MediaSendDropped += m.Media.MediaSendDropped
+			s.metrics.RetransmitRequests += m.Media.RetransmitRequests
+			s.metrics.RetransmitsSent += m.Media.RetransmitsSent
+			s.metrics.RetransmitMissing += m.Media.RetransmitMissing
+			s.metrics.RetransmitExpired += m.Media.RetransmitExpired
+			s.metrics.RetransmitQueueDrops += m.Media.RetransmitQueueDrops
+			s.metrics.BacklogPackets = max(s.metrics.BacklogPackets, m.Media.BacklogPackets)
+			s.metrics.BacklogLimit = max(s.metrics.BacklogLimit, m.Media.BacklogLimitPackets)
+		}
+
+		if haveBuffer {
+			s.metrics.ReceiverBufferMs = deepest
+			s.metrics.HasReceiverBuffer = true
+		}
+		if haveRTT {
+			s.metrics.NetworkRTTMs = worstRTT
+			s.metrics.HasNetworkRTT = true
+			if worstRTT > s.metrics.SessionPeakRTTMs {
+				s.metrics.SessionPeakRTTMs = worstRTT
+			}
+			s.metrics.rttSamples = append(s.metrics.rttSamples, worstRTT)
+			if len(s.metrics.rttSamples) > 600 {
+				s.metrics.rttSamples = s.metrics.rttSamples[len(s.metrics.rttSamples)-600:]
 			}
 		}
+
+		// The audible delay is the receiver's buffer, plus half the round trip
+		// for one-way transit. Only observed parts count, so a missing
+		// measurement lowers the total rather than inventing a value.
+		if haveBuffer {
+			total := deepest
+			if haveRTT {
+				total += worstRTT / 2
+			}
+			s.metrics.TotalLatencyMs = total
+			s.metrics.HasTotalLatency = true
+			s.metrics.History = append(s.metrics.History, total)
+			if len(s.metrics.History) > 180 {
+				s.metrics.History = s.metrics.History[len(s.metrics.History)-180:]
+			}
+		}
+
 	case "stopped":
 		s.metrics.Phase = PhaseStopped
 		s.metrics.Detail = "stopped"
 	case "warning":
 		var w struct {
-			Message string `json:"message"`
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			Recovered bool   `json:"recovered"`
+			Skipped   uint64 `json:"skipped_packets"`
 		}
 		if json.Unmarshal(ev.Raw, &w) == nil {
 			s.metrics.Detail = w.Message
+			// The sender fell behind far enough to discard audio. That is the
+			// stutter the user hears, so it is recorded even though the sender
+			// recovered.
+			if w.Code == "sender_late_recovered" {
+				s.metrics.SenderLateRecoveries++
+				s.metrics.SkippedPackets += w.Skipped
+			}
 		}
 	case "error":
 		var e struct {
@@ -169,4 +307,51 @@ func (s *State) Apply(ev Event) {
 			s.metrics.Phase = PhaseFailed
 		}
 	}
+}
+
+// MediaMetrics is one member's media counters, as the engine reports them.
+type MediaMetrics struct {
+	PacketsSent              uint64  `json:"packets_sent"`
+	MediaSendErrors          uint64  `json:"media_send_errors"`
+	MediaSendBacklogged      uint64  `json:"media_send_backlogged"`
+	MediaSendDropped         uint64  `json:"media_send_dropped"`
+	SyncSendErrors           uint64  `json:"sync_send_errors"`
+	RetransmitRequests       uint64  `json:"retransmit_requests"`
+	RetransmitsSent          uint64  `json:"retransmits_sent"`
+	RetransmitMissing        uint64  `json:"retransmit_missing"`
+	RetransmitExpired        uint64  `json:"retransmit_expired"`
+	RetransmitQueueDrops     uint64  `json:"retransmit_queue_drops"`
+	RetransmitSendErrors     uint64  `json:"retransmit_send_errors"`
+	ReceiverLatencyMs        float64 `json:"receiver_latency_ms"`
+	ReceiverLatencyEstimated bool    `json:"receiver_latency_estimated"`
+	BacklogPackets           int     `json:"media_backlog_packets"`
+	BacklogLimitPackets      int     `json:"media_backlog_limit_packets"`
+	AudioSendBufferBytes     int     `json:"audio_send_buffer_bytes"`
+}
+
+// Health is what the engine knows about the link to one member.
+type Health struct {
+	EventMessages     uint64 `json:"event_messages"`
+	FeedbackSuccesses uint64 `json:"feedback_successes"`
+	FeedbackFailures  uint64 `json:"feedback_failures"`
+	// FeedbackRTTMs is the round trip of the engine's own feedback request.
+	// This is the number that moves when the network's ping moves.
+	FeedbackRTTMs   *float64 `json:"feedback_rtt_ms"`
+	FeedbackDelayed bool     `json:"feedback_delayed"`
+}
+
+// MemberMetrics is one receiver's whole picture.
+type MemberMetrics struct {
+	Host   string       `json:"host"`
+	Media  MediaMetrics `json:"media"`
+	Health Health       `json:"health"`
+}
+
+// TransportMetrics is one report from the engine.
+type TransportMetrics struct {
+	SessionUptimeMs      uint64          `json:"session_uptime_ms"`
+	SenderLateRecoveries uint64          `json:"sender_late_recoveries"`
+	SkippedPackets       uint64          `json:"skipped_packets"`
+	MaxSendLatenessUs    uint64          `json:"max_send_lateness_us"`
+	Members              []MemberMetrics `json:"members"`
 }

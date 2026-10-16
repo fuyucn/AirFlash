@@ -50,16 +50,6 @@ type Hello struct {
 	ProductionReady bool     `json:"production_ready"`
 }
 
-// TransportMetrics is what the latency readout uses.
-type TransportMetrics struct {
-	PacketsSent       uint64  `json:"packets_sent"`
-	SendErrors        uint64  `json:"send_errors"`
-	SendDelayed       uint64  `json:"send_delayed"`
-	MaxStallMs        float64 `json:"max_stall_ms"`
-	BacklogDrops      uint64  `json:"backlog_drops"`
-	MeasuredLatencyMs float64 `json:"measured_latency_ms"`
-}
-
 // Handler receives every event the engine emits. It is called from the
 // reader goroutine, so it must not block for long.
 type Handler func(Event)

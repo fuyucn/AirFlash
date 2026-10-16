@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -26,6 +25,8 @@ type Deps struct {
 	OnStop    func()
 	OnGain    func(float64)
 	OnLatency func(int)
+	OnAuto    func(bool)
+	AdaptedMs func() int
 	OnMode    func(settings.Mode)
 	OnClose   func()
 	OnQuit    func()
@@ -35,7 +36,7 @@ type Deps struct {
 type page int
 
 const (
-	pageNow page = iota
+	pageStats page = iota
 	pageReceivers
 	pageSettings
 )
@@ -63,7 +64,7 @@ func (s *Shell) SetPage(name string) {
 	case "settings":
 		s.page = pageSettings
 	default:
-		s.page = pageNow
+		s.page = pageStats
 	}
 }
 
@@ -102,7 +103,7 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 			ui.Text(c, "AirFlash").FontSize(16).Bold().TextColor(p.Ink)
 		})
 
-		s.navItem(c, p, "Now playing", pageNow)
+		s.navItem(c, p, "Stats", pageStats)
 		s.navItem(c, p, "Receivers", pageReceivers)
 		s.navItem(c, p, "Settings", pageSettings)
 
@@ -152,7 +153,7 @@ func (s *Shell) toolbar(c *ui.Context, p palette, cfg settings.Settings, st engi
 		bar.Material(glass.Glass{Style: glass.Regular})
 	}
 	bar.Children(func() {
-		title := "Now playing"
+		title := "Stats"
 		switch s.page {
 		case pageReceivers:
 			title = "Receivers"
@@ -175,8 +176,8 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 	body := ui.Scroll(c).Fill().Padding(24, 22)
 	body.Children(func() {
 		switch s.page {
-		case pageNow:
-			s.nowPage(c, p, cfg, st)
+		case pageStats:
+			s.statsPage(c, p, cfg, st)
 		case pageReceivers:
 			s.receiversPage(c, p, cfg)
 		case pageSettings:
@@ -187,13 +188,14 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 
 // nowPage is the one thing the user opened the window to see: is audio
 // flowing, how far behind is it, and one control to start or stop.
-func (s *Shell) nowPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+func (s *Shell) statsPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(18).Children(func() {
 		s.measurement(c, p, cfg, st)
 		if cfg.ShowTrend {
 			s.trend(c, p, cfg, st)
 		}
 		s.controls(c, p, cfg, st)
+		s.diagnostics(c, p, cfg, st)
 	})
 }
 
@@ -210,41 +212,82 @@ func targetMs(cfg settings.Settings, st engine.Metrics) float64 {
 // one word carry the whole screen.
 func (s *Shell) measurement(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	target := targetMs(cfg, st)
-	band := bandFor(p, target, st.MeasuredMs, st.HasMeasured)
 
-	card := ui.Column(c).FillWidth().Padding(20).Gap(14).Radius(14).Background(p.Surface)
+	card := ui.Column(c).FillWidth().Padding(20).Gap(16).Radius(14).Background(p.Surface)
 	card.Children(func() {
-		ui.Row(c).Gap(48).Children(func() {
+		ui.Row(c).Gap(44).Children(func() {
+			// The target is what the user chose.
 			ui.Column(c).Gap(2).Children(func() {
 				ui.Text(c, "Target").FontSize(12).TextColor(p.InkMuted)
 				ui.Text(c, fmt.Sprintf("%.0f", target)).FontSize(44).Bold().TextColor(p.Ink)
 				ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
 			})
+
+			// The receiver's buffer is the biggest part of what is heard.
 			ui.Column(c).Gap(2).Children(func() {
-				ui.Text(c, "Measured").FontSize(12).TextColor(p.InkMuted)
-				if st.HasMeasured {
-					ui.Text(c, fmt.Sprintf("%.0f", st.MeasuredMs)).FontSize(44).Bold().TextColor(band.Color)
+				ui.Text(c, "Receiver buffer").FontSize(12).TextColor(p.InkMuted)
+				if st.HasReceiverBuffer {
+					ui.Text(c, fmt.Sprintf("%.0f", st.ReceiverBufferMs)).FontSize(44).Bold().
+						TextColor(p.Ink)
+					label := "milliseconds"
+					if st.ReceiverBufferEstimated {
+						label = "milliseconds, estimated"
+					}
+					ui.Text(c, label).FontSize(12).TextColor(p.InkMuted)
 				} else {
 					ui.Text(c, "—").FontSize(44).Bold().TextColor(p.InkMuted)
+					ui.Text(c, "waiting for playback").FontSize(12).TextColor(p.InkMuted)
 				}
-				ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
+			})
+
+			// The network's round trip: what moves when the ping moves.
+			ui.Column(c).Gap(2).Children(func() {
+				ui.Text(c, "Network round trip").FontSize(12).TextColor(p.InkMuted)
+				if st.HasNetworkRTT {
+					ui.Text(c, fmt.Sprintf("%.0f", st.NetworkRTTMs)).FontSize(44).Bold().
+						TextColor(rttColor(p, st.NetworkRTTMs))
+					ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
+				} else {
+					ui.Text(c, "—").FontSize(44).Bold().TextColor(p.InkMuted)
+					ui.Text(c, "not measured yet").FontSize(12).TextColor(p.InkMuted)
+				}
 			})
 		})
 
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Box(c).Width(8).Height(8).Radius(4).Background(band.Color)
-			ui.Text(c, band.Label).FontSize(13).TextColor(p.InkMuted)
-		})
+		// What the user actually hears, as far as the parts can say.
+		if st.HasTotalLatency {
+			band := bandFor(p, target, st.TotalLatencyMs, true)
+			ui.Row(c).Gap(8).Children(func() {
+				ui.Box(c).Width(8).Height(8).Radius(4).Background(band.Color)
+				ui.Text(c, fmt.Sprintf("About %.0f ms from capture to playback · %s",
+					st.TotalLatencyMs, band.Label)).FontSize(13).TextColor(p.InkMuted)
+			})
+		} else {
+			ui.Text(c, "Start playback and the measured delay appears here.").
+				FontSize(13).TextColor(p.InkMuted)
+		}
 	})
+}
+
+// rttColor flags a round trip high enough to threaten the jitter budget. It is
+// a report, not a grade: a slow network is a fact, not a mistake.
+func rttColor(p palette, rtt float64) ui.Color {
+	switch {
+	case rtt <= 20:
+		return p.Success
+	case rtt <= 60:
+		return p.Warning
+	default:
+		return p.Danger
+	}
 }
 
 // trend draws the measured latency over time, with the target as a reference
 // line so a drift away from it is visible without reading numbers.
+// trend draws the session's latency over time, against the target, so a drift
+// away from it is visible without reading numbers.
 func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
-	// Before the first reading there is nothing to plot. A large empty frame
-	// would read as a hole in the layout, so the card is only as tall as what
-	// it has to say until there is a reading.
-	if !st.HasMeasured {
+	if !st.HasTotalLatency {
 		card := ui.Column(c).FillWidth().Padding(20).Gap(4).Radius(14).Background(p.Surface)
 		card.Children(func() {
 			ui.Text(c, "Latency over time").FontSize(13).TextColor(p.Ink)
@@ -254,48 +297,114 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 		return
 	}
 
+	target := float64(cfg.EffectiveLatencyMs(s.adapted()))
+	hist := st.History
+
 	card := ui.Column(c).FillWidth().Padding(20).Gap(10).Radius(14).Background(p.Surface)
 	card.Children(func() {
-		ui.Text(c, "Latency over time").FontSize(13).TextColor(p.InkMuted)
+		// The headline: the latest reading, set large.
+		ui.Row(c).Gap(12).Children(func() {
+			ui.Text(c, "Latency over time").FontSize(13).TextColor(p.InkMuted)
+			ui.Spacer(c).Grow(1)
+			ui.Text(c, fmt.Sprintf("%.0f ms now", hist[len(hist)-1])).
+				FontSize(13).Bold().TextColor(p.Ink)
+		})
 
-		plot := ui.Box(c).FillWidth().Height(104).Radius(8).Background(p.SurfaceHi)
+		plot := ui.Box(c).FillWidth().Height(140).Radius(8).Background(p.SurfaceHi)
 		plot.Draw(func(pt *ui.Painter, r ui.Rect) {
-			hist := st.History
-			target := targetMs(cfg, st)
+			drawLatencyPlot(pt, r, p, hist, target)
+		})
 
-			lo, hi := target*0.8, target*1.2
-			for _, v := range hist {
-				if v < lo {
-					lo = v
-				}
-				if v > hi {
-					hi = v
-				}
-			}
-			if hi-lo < 1 {
-				hi = lo + 1
-			}
-			yOf := func(v float64) float32 {
-				f := (v - lo) / (hi - lo)
-				return r.Y + r.H - float32(f)*r.H
-			}
-
-			// The target reference.
-			ty := yOf(target)
-			pt.Line(r.X, ty, r.X+r.W, ty, 1, p.Hairline)
-
-			if len(hist) < 2 {
-				return
-			}
-			step := r.W / float32(len(hist)-1)
-			prevX, prevY := r.X, yOf(hist[0])
-			for i := 1; i < len(hist); i++ {
-				x, y := r.X+float32(i)*step, yOf(hist[i])
-				pt.Line(prevX, prevY, x, y, 1.5, p.Accent)
-				prevX, prevY = x, y
-			}
+		// A scale the reader can use, and what the reference line means.
+		lo, hi := plotRange(hist, target)
+		ui.Row(c).Gap(10).Children(func() {
+			ui.Text(c, fmt.Sprintf("%.0f ms", lo)).FontSize(11).TextColor(p.InkMuted)
+			ui.Spacer(c).Grow(1)
+			ui.Text(c, fmt.Sprintf("target %d ms", int(target))).FontSize(11).TextColor(p.InkMuted)
+			ui.Spacer(c).Grow(1)
+			ui.Text(c, fmt.Sprintf("%.0f ms", hi)).FontSize(11).TextColor(p.InkMuted)
 		})
 	})
+}
+
+// plotRange is the vertical range a latency plot is drawn over.
+//
+// It spans what was actually measured rather than a fixed band around the
+// target, so the shape of the series fills the plot instead of sitting in a
+// thin strip. The target is always included, so the reference line is never
+// off-screen, and a small margin keeps the extremes off the edges.
+func plotRange(hist []float64, target float64) (lo, hi float64) {
+	lo, hi = target, target
+	for _, v := range hist {
+		if v < lo {
+			lo = v
+		}
+		if v > hi {
+			hi = v
+		}
+	}
+
+	// A quarter of the span, or 10 ms when the series is nearly flat, so a
+	// steady line still has a readable band around it.
+	margin := (hi - lo) / 4
+	if margin < 10 {
+		margin = 10
+	}
+	lo -= margin
+	hi += margin
+
+	if hi <= lo {
+		hi = lo + 1
+	}
+	return lo, hi
+}
+
+// drawLatencyPlot draws the latency series and the target reference.
+//
+// The reference is drawn in the text colour rather than a hairline: it is the
+// line the reader compares everything against, so it has to be visible. Marks
+// are only drawn for readings that went over, which is the audible gap.
+func drawLatencyPlot(pt *ui.Painter, r ui.Rect, p palette, hist []float64, target float64) {
+	lo, hi := plotRange(hist, target)
+	yOf := func(v float64) float32 {
+		f := (v - lo) / (hi - lo)
+		return r.Y + r.H - float32(f)*r.H
+	}
+
+	// The target reference, visible against the plot's own background.
+	ty := yOf(target)
+	pt.Line(r.X, ty, r.X+r.W, ty, 1, p.InkMuted)
+
+	if len(hist) < 2 {
+		return
+	}
+	step := r.W / float32(len(hist)-1)
+
+	// Readings that went over the target, marked behind the line so the shape
+	// of the series still reads.
+	for i, v := range hist {
+		if v <= target {
+			continue
+		}
+		x := r.X + float32(i)*step
+		pt.Line(x, yOf(v), x, ty, 1, p.Danger)
+	}
+
+	// The series, drawn as segments so a spike keeps its shape.
+	prevX, prevY := r.X, yOf(hist[0])
+	for i := 1; i < len(hist); i++ {
+		x, y := r.X+float32(i)*step, yOf(hist[i])
+		pt.Line(prevX, prevY, x, y, 1.5, p.Accent)
+		prevX, prevY = x, y
+	}
+}
+
+// adapted is what the shell worked out from previous sessions.
+func (s *Shell) adapted() int {
+	if s.deps.AdaptedMs == nil {
+		return 0
+	}
+	return s.deps.AdaptedMs()
 }
 
 // controls are the two things that actually change playback.
@@ -313,22 +422,9 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 			})
 		})
 
-		// Latency target. Changing it mid-stream is not offered: the engine
-		// takes it when a stream starts.
-		target := float64(cfg.LatencyMs)
-		ui.Column(c).Gap(8).Children(func() {
-			ui.Row(c).Gap(8).Children(func() {
-				ui.Text(c, fmt.Sprintf("Latency target  %.0f ms", target)).FontSize(13).TextColor(p.Ink)
-				if st.Phase == engine.PhaseStreaming {
-					ui.Text(c, "· applies to the next start").FontSize(11).TextColor(p.InkMuted)
-				}
-			})
-			ui.Slider(c, &target, 200, 2000).FillWidth().OnChange(func() {
-				if s.deps.OnLatency != nil {
-					s.deps.OnLatency(int(math.Round(target)))
-				}
-			})
-		})
+		// Latency. Auto picks from what the network actually did; the choices
+		// beside it are the floor Auto will not go below.
+		s.latencyControl(c, p, cfg, st)
 
 		// The action.
 		ui.Row(c).Gap(10).Children(func() {
@@ -348,6 +444,139 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 			}
 		})
 	})
+}
+
+// latencyControl offers Auto and, beside it, the targets a user can pin.
+//
+// Auto is the default because the number is not something a user can know: it
+// depends on the network at the time. The setting beside it is the floor Auto
+// will not go below, which is the one thing only the user can say.
+func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+	choices := settings.LatencyChoices()
+
+	// The segmented control holds an index: 0 is Auto, then one per choice.
+	labels := make([]string, 0, len(choices)+1)
+	labels = append(labels, "Auto")
+	for _, ms := range choices {
+		labels = append(labels, fmt.Sprintf("%d", ms))
+	}
+
+	index := 0
+	if !cfg.LatencyAuto {
+		// A pinned setting that is not one of the presets shows as Auto until
+		// the user picks again; the effective line below still states the truth.
+		for i, ms := range choices {
+			if ms == cfg.LatencyMs {
+				index = i + 1
+				break
+			}
+		}
+	}
+
+	ui.Column(c).Gap(8).Children(func() {
+		ui.Row(c).Gap(10).Children(func() {
+			ui.Text(c, "Latency").FontSize(13).TextColor(p.Ink)
+			ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
+		})
+
+		seg := ui.Segmented(c, &index, labels...)
+		if seg.Changed() {
+			if index == 0 {
+				if s.deps.OnAuto != nil {
+					s.deps.OnAuto(true)
+				}
+			} else if index-1 < len(choices) {
+				if s.deps.OnAuto != nil {
+					s.deps.OnAuto(false)
+				}
+				if s.deps.OnLatency != nil {
+					s.deps.OnLatency(choices[index-1])
+				}
+			}
+		}
+
+		// What the engine will actually be asked for, so the control is never
+		// a mystery.
+		effective := cfg.EffectiveLatencyMs(s.adapted())
+		line := fmt.Sprintf("The engine will be asked for %d ms", effective)
+		if cfg.LatencyAuto {
+			if effective > cfg.LatencyMs {
+				line += fmt.Sprintf(" · Auto raised it from your floor of %d ms", cfg.LatencyMs)
+			} else {
+				line += " · Auto, at your floor"
+			}
+		}
+		ui.Text(c, line).FontSize(12).TextColor(p.InkMuted)
+
+		if st.Phase == engine.PhaseStreaming {
+			ui.Text(c, "A new target applies to the next start.").FontSize(11).TextColor(p.InkMuted)
+		}
+	})
+}
+
+// diagnostics shows the counters that explain a stutter. They are only
+// meaningful while something is playing, and in lightweight mode they are left
+// out: the point of that mode is to stop the shell spending cycles on itself.
+func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+	if st.Phase != engine.PhaseStreaming || cfg.Mode == settings.ModeLightweight {
+		return
+	}
+
+	// A sender stall is the stutter itself: it fell behind and threw away
+	// audio. Packet loss is what makes the receiver ask for it again.
+	losses := st.RetransmitMissing + st.RetransmitExpired
+	unhealthy := st.SenderLateRecoveries > 0 || st.SkippedPackets > 0 ||
+		losses > 0 || st.RetransmitQueueDrops > 0 || st.MediaSendDropped > 0
+
+	card := ui.Column(c).FillWidth().Padding(20).Gap(12).Radius(14).Background(p.Surface)
+	card.Children(func() {
+		ui.Row(c).Gap(8).Children(func() {
+			ui.Text(c, "Diagnostics").FontSize(13).TextColor(p.Ink)
+			if unhealthy {
+				ui.Text(c, "· something is being lost").FontSize(12).TextColor(p.Warning)
+			} else {
+				ui.Text(c, "· nothing lost so far").FontSize(12).TextColor(p.Success)
+			}
+		})
+
+		// Two columns of counters, because these are read by comparing them.
+		ui.Row(c).Gap(40).Children(func() {
+			ui.Column(c).Gap(6).Children(func() {
+				s.counter(c, p, "Sender fell behind", st.SenderLateRecoveries,
+					"the sender discarded expired audio")
+				s.counter(c, p, "Audio slots skipped", st.SkippedPackets,
+					"each one is a gap you can hear")
+				s.counter(c, p, "Packets dropped on send", st.MediaSendDropped, "")
+			})
+			ui.Column(c).Gap(6).Children(func() {
+				s.counter(c, p, "Retransmit requests", st.RetransmitRequests,
+					"the receiver asked for packets again")
+				s.counter(c, p, "Lost past recovery", losses,
+					"too late to resend, so the receiver played over the gap")
+				s.counter(c, p, "Queue overflow", st.RetransmitQueueDrops, "")
+			})
+		})
+
+		if st.FeedbackDelayed {
+			ui.Text(c, "The receiver's feedback is late, which is what a rising ping looks like.").
+				FontSize(12).TextColor(p.Warning)
+		}
+	})
+}
+
+// counter draws one labelled number.
+func (s *Shell) counter(c *ui.Context, p palette, label string, value uint64, hint string) {
+	col := p.InkMuted
+	if value > 0 {
+		col = p.Warning
+	}
+	ui.Row(c).Gap(8).Children(func() {
+		ui.Text(c, label).FontSize(12).TextColor(p.InkMuted)
+		ui.Text(c, fmt.Sprintf("%d", value)).FontSize(12).Bold().TextColor(col)
+	})
+	if hint != "" && value > 0 {
+		ui.Text(c, hint).FontSize(11).TextColor(p.InkMuted)
+	}
 }
 
 func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
