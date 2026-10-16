@@ -114,12 +114,33 @@ jobs:
           Get-Content $log
 
       # The GUI apps cannot be measured by the loop above: they own a window,
-      # a message loop and a renderer. Each writes a JSON report instead.
+      # a message loop and a renderer. Each writes a JSON report instead, and
+      # the whole process tree is sampled, because a webview (WebView2) and a
+      # compositor run in their own processes.
       - name: Measure the GUI stacks
         shell: pwsh
         run: |
           $cores = [Environment]::ProcessorCount
           $log = 'artifacts/probe/baseline-log.txt'
+
+          function Get-TreeRss($rootPid) {
+            $all = Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize
+            $sum = 0L; $count = 0; $rows = @()
+            $queue = @($rootPid); $seen = @{}
+            while ($queue.Count -gt 0) {
+              $cur = $queue[0]
+              $queue = @($queue[1..($queue.Count - 1)])
+              if ($seen.ContainsKey($cur)) { continue }
+              $seen[$cur] = $true
+              foreach ($c in $all | Where-Object { $_.ParentProcessId -eq $cur }) {
+                $sum += $c.WorkingSetSize
+                $count++
+                $rows += "    child $($c.Name) ws=$([math]::Round($c.WorkingSetSize / 1MB, 1)) MB"
+                $queue += $c.ProcessId
+              }
+            }
+            return @{ Sum = $sum; Count = $count; Rows = $rows }
+          }
 
           function Measure-App($name, $exe, $report) {
             "---------- $name ----------" | Out-File $log -Append
@@ -129,6 +150,14 @@ jobs:
             }
             $args = @('-auto', $report, '-slots', '800', '-burn', "$cores")
             $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -ErrorAction Stop
+            Start-Sleep -Seconds 3
+            $tree = Get-TreeRss $p.Id
+            $root = (Get-CimInstance Win32_Process -Filter "ProcessId = $($p.Id)").WorkingSetSize
+            "  root process : $([math]::Round($root / 1MB, 1)) MB" | Out-File $log -Append
+            "  child procs  : $($tree.Count), $([math]::Round($tree.Sum / 1MB, 1)) MB" | Out-File $log -Append
+            $tree.Rows | Out-File $log -Append
+            "  TREE TOTAL   : $([math]::Round(($root + $tree.Sum) / 1MB, 1)) MB" | Out-File $log -Append
+
             if (-not $p.WaitForExit(180000)) {
               $p.Kill()
               "TIMEOUT after 180s" | Out-File $log -Append
@@ -145,7 +174,8 @@ jobs:
 
           Measure-App 'mygo (Go) GUI, burn=all cores' 'artifacts/probe/AirFlash Probe.exe' 'artifacts/probe/report-mygo.json'
           Measure-App 'WPF (C#) GUI, burn=all cores'   'artifacts/probe/WpfProbe.exe'       'artifacts/probe/report-wpf.json'
-          Get-Content $log | Select-Object -Last 60
+          "=== GUI section ===" | Out-File $log -Append
+          Get-Content $log | Select-Object -Last 70
 
       - name: Hash the binaries
         shell: pwsh
