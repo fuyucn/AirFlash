@@ -4,6 +4,8 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"os"
 	"path/filepath"
 	"sync"
@@ -57,6 +59,9 @@ type Settings struct {
 	// Adapt raises the target when a session showed a gap. It only ever moves
 	// the target at a session boundary, never during one.
 	Adapt bool `json:"adapt"`
+
+	// Language is which words the interface uses. System follows the machine.
+	Language string `json:"language"`
 
 	// StartAtLogin launches the shell when the machine starts, as the desktop
 	// host does through the same Run key.
@@ -184,6 +189,9 @@ func (s Settings) normalized() Settings {
 		s.ShowTrend = false
 		s.ReducedMotion = true
 	}
+	if s.Language == "" {
+		s.Language = string(i18n.System)
+	}
 	// The desktop host bounds retries at twenty; one is a single attempt with no
 	// retry behind it.
 	if s.ReconnectAttempts < 1 {
@@ -209,6 +217,11 @@ const (
 // maxSessions bounds the recorded history. Older sessions say less about the
 // network than recent ones, and an unbounded list would grow forever.
 const maxSessions = 50
+
+// Lang is the language the interface is drawn in, with System resolved.
+func (s Settings) Lang() i18n.Language {
+	return i18n.For(i18n.Language(s.Language)).Lang
+}
 
 // EffectiveLatencyMs is the target to ask the engine for. With Auto on it is
 // what the shell worked out from previous sessions, never below the floor the

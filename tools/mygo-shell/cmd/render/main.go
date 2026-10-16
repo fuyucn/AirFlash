@@ -14,6 +14,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
@@ -52,64 +53,73 @@ func main() {
 	receivers[len(receivers)-1].Online = false
 	fmt.Fprintf(os.Stderr, "receivers: %d\n", len(receivers))
 
-	for _, state := range []struct {
-		name    string
-		st      *engine.State
-		playing bool
-	}{
-		{"idle", idle(), false},
-		{"streaming", streaming(), true},
-	} {
-		// The panel learns which receiver is playing from the app, not from the
-		// engine, so the shot has to say it the way the app would.
-		playingID := ""
-		if state.playing && len(receivers) > 0 {
-			playingID = receivers[0].ID
-		}
-		panel := appui.NewPanel(appui.Deps{
-			State:     state.st,
-			Settings:  cfg,
-			Life:      shell.New(),
-			Receivers: func() []discovery.Receiver { return receivers },
-			PlayingReceiver: func() *discovery.Receiver {
-				if playingID == "" {
-					return nil
-				}
-				for _, r := range receivers {
-					if r.ID == playingID {
-						found := r
-						return &found
-					}
-				}
-				return nil
-			},
-			OnPlay: func(r discovery.Receiver) {},
-			OnStop: func() {},
-			OnQuit: func() {},
-		})
-		// The panel is a flyout: the platform draws the surface, so the shot is
-		// only as tall as the content asks for.
-		write(filepath.Join(out, "panel-"+state.name+".png"), panel.View,
-			appui.PanelWidth(), panel.Height(), 2)
-
-		view := appui.New(appui.Deps{
-			State:     state.st,
-			Settings:  cfg,
-			Life:      shell.New(),
-			Receivers: func() []discovery.Receiver { return receivers },
-			OnPlay:    func(r discovery.Receiver) {},
-			AdaptedMs: func() int { return 500 },
-		})
-		for _, page := range []string{"stats", "receivers", "settings"} {
-			view.SetPage(page)
-			// A tall window, so the whole page is in the shot rather than only
-			// what fits in a 640 DIP viewport: the diagnostics and capture
-			// sections sit below the fold.
-			height := 640
-			if page == "stats" {
-				height = 1180
+	for _, lang := range []string{"en", "zh"} {
+		for _, state := range []struct {
+			name    string
+			st      *engine.State
+			playing bool
+		}{
+			{"idle", idle(), false},
+			{"streaming", streaming(), true},
+		} {
+			// The panel learns which receiver is playing from the app, not from the
+			// engine, so the shot has to say it the way the app would.
+			playingID := ""
+			if state.playing && len(receivers) > 0 {
+				playingID = receivers[0].ID
 			}
-			write(filepath.Join(out, "window-"+state.name+"-"+page+".png"), view.View, 880, height, 2)
+			// Both languages, so the tables can be looked at: a missing key shows as
+			// English, which is what a translation that falls behind looks like.
+			cfg.Update(func(s *settings.Settings) { s.Language = lang })
+			words := i18n.For(i18n.Language(lang))
+
+			panel := appui.NewPanel(appui.Deps{
+				Words:     words,
+				State:     state.st,
+				Settings:  cfg,
+				Life:      shell.New(),
+				Receivers: func() []discovery.Receiver { return receivers },
+				PlayingReceiver: func() *discovery.Receiver {
+					if playingID == "" {
+						return nil
+					}
+					for _, r := range receivers {
+						if r.ID == playingID {
+							found := r
+							return &found
+						}
+					}
+					return nil
+				},
+				OnPlay: func(r discovery.Receiver) {},
+				OnStop: func() {},
+				OnQuit: func() {},
+			})
+			// The panel is a flyout: the platform draws the surface, so the shot is
+			// only as tall as the content asks for.
+			write(filepath.Join(out, fmt.Sprintf("panel-%s-%s.png", lang, state.name)), panel.View,
+				appui.PanelWidth(), panel.Height(), 2)
+
+			view := appui.New(appui.Deps{
+				Words:     words,
+				State:     state.st,
+				Settings:  cfg,
+				Life:      shell.New(),
+				Receivers: func() []discovery.Receiver { return receivers },
+				OnPlay:    func(r discovery.Receiver) {},
+				AdaptedMs: func() int { return 500 },
+			})
+			for _, page := range []string{"stats", "receivers", "settings"} {
+				view.SetPage(page)
+				// A tall window, so the whole page is in the shot rather than only
+				// what fits in a 640 DIP viewport: the diagnostics and capture
+				// sections sit below the fold.
+				height := 640
+				if page == "stats" {
+					height = 1180
+				}
+				write(filepath.Join(out, fmt.Sprintf("window-%s-%s-%s.png", lang, state.name, page)), view.View, 880, height, 2)
+			}
 		}
 	}
 }

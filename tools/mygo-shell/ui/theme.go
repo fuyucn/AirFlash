@@ -18,6 +18,7 @@ package ui
 
 import (
 	"github.com/egoist/mygo/ui"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 )
 
 // palette is one appearance.
@@ -146,17 +147,17 @@ type latencyBand struct {
 	Color ui.Color
 }
 
-func bandFor(p palette, requested, measured float64, hasMeasured bool) latencyBand {
+func bandFor(words i18n.Translator, p palette, requested, measured float64, hasMeasured bool) latencyBand {
 	if !hasMeasured {
-		return latencyBand{Label: "waiting for the first reading", Color: p.InkMuted}
+		return latencyBand{Label: words.T("waiting for the first reading"), Color: p.InkMuted}
 	}
 	over := measured - requested
 	switch {
 	case over <= 40:
-		return latencyBand{Label: "on target", Color: p.Success}
+		return latencyBand{Label: words.T("on target"), Color: p.Success}
 	case over <= 160:
-		return latencyBand{Label: "slightly over target", Color: p.Warning}
+		return latencyBand{Label: words.T("slightly over target"), Color: p.Warning}
 	default:
-		return latencyBand{Label: "well over target", Color: p.Danger}
+		return latencyBand{Label: words.T("well over target"), Color: p.Danger}
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 )
 
 func TestBucketsKeepsASpikeAsAMark(t *testing.T) {
@@ -114,7 +115,7 @@ func TestPlotRangeLeavesRoomAroundAFlatSeries(t *testing.T) {
 
 func TestGapSummaryCountsTheSecondsThatLostAudio(t *testing.T) {
 	slots := []engine.Slot{{}, {Skipped: 3}, {}, {Recoveries: 1}, {}}
-	if got := gapSummary(slots); got != "2 of 5 s lost audio" {
+	if got := gapSummary(i18n.For(i18n.English), slots); got != "2 of 5 s lost audio" {
 		t.Errorf("summary = %q, want the two gapped seconds named", got)
 	}
 }
@@ -123,7 +124,7 @@ func TestGapSummarySaysSoWhenNothingWasLost(t *testing.T) {
 	// The good case has to be stated, not left blank: an empty chart is
 	// indistinguishable from a chart that is not working.
 	slots := make([]engine.Slot, 12)
-	if got := gapSummary(slots); got != "none in the last 12 s" {
+	if got := gapSummary(i18n.For(i18n.English), slots); got != "none in the last 12 s" {
 		t.Errorf("summary = %q, want it to say the session was clean", got)
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/enginebin"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
@@ -115,6 +116,19 @@ type App struct {
 	// discoveryCancel stops the mDNS browse. Discovery runs only while a window
 	// is open, so a closed window costs nothing on the network either.
 	discoveryCancel atomic.Pointer[context.CancelFunc]
+
+	// page is which window page is open. It is the app's rather than the
+	// window's because the window is destroyed and rebuilt freely, and a rebuild
+	// that lost the page would drop the user back on Stats.
+	page atomic.Pointer[string]
+}
+
+// currentPage is which page the window shows, for a rebuild to keep.
+func (a *App) currentPage() string {
+	if p := a.page.Load(); p != nil {
+		return *p
+	}
+	return "stats"
 }
 
 func (a *App) run() {
@@ -232,6 +246,13 @@ func (a *App) openWindow(page string) {
 			a.life.Close()
 			a.openWindow(page)
 		},
+		OnLanguage: func(lang string) {
+			a.settings.Update(func(s *settings.Settings) { s.Language = lang })
+			// The words the window is drawn in, so the window is rebuilt. A
+			// partial redraw would leave half the page in the old language.
+			a.life.Close()
+			a.openWindow(a.currentPage())
+		},
 		OnStartAtLogin: func(on bool) {
 			a.settings.Update(func(s *settings.Settings) { s.StartAtLogin = on })
 			// The setting is a request to change the registry, and the registry
@@ -250,6 +271,7 @@ func (a *App) openWindow(page string) {
 		OnQuit:  func() { mygo.App.Quit() },
 	})
 	view.SetPage(page)
+	a.page.Store(&page)
 
 	opts := mygo.WindowOptions{
 		Title:           "AirFlash",
@@ -390,6 +412,7 @@ func (a *App) togglePanel() {
 // panelView builds the panel with the app's callbacks.
 func (a *App) panelView() *appui.Panel {
 	return appui.NewPanel(appui.Deps{
+		Words:     i18n.For(a.settings.Current().Lang()),
 		State:     a.state,
 		Settings:  a.settings,
 		Life:      a.life,

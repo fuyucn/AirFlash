@@ -8,12 +8,16 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 )
 
 // Deps is everything the view reads and calls.
 type Deps struct {
+	// Words is the language the interface is drawn in. A nil translator draws
+	// English, which is what every key already is.
+	Words     i18n.Translator
 	State     *engine.State
 	Settings  *settings.Store
 	Life      *shell.Lifecycle
@@ -40,6 +44,9 @@ type Deps struct {
 	// without it the action would fall back to whatever discovery listed
 	// first, which is not necessarily what is actually playing.
 	PlayingReceiver func() *discovery.Receiver
+	// OnLanguage changes the language, which rebuilds the window so the change
+	// is not half applied.
+	OnLanguage func(string)
 	// OnStartAtLogin turns the start-with-the-machine setting on or off.
 	OnStartAtLogin func(bool)
 	// OnReconnect turns the retry-a-dropped-session setting on or off.
@@ -72,6 +79,9 @@ type Shell struct {
 func New(d Deps) *Shell {
 	return &Shell{deps: d, entered: time.Now()}
 }
+
+// t translates one of the interface's strings.
+func (s *Shell) t(english string) string { return s.deps.Words.T(english) }
 
 // SetPage selects which page the window shows. It exists so a caller can open
 // the window on a particular page, and so a render check can look at one
@@ -120,26 +130,26 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 	// dashed line rather than at a change of tone alone.
 	bar.BorderWidth(0, 1, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 	bar.Children(func() {
-		ui.Text(c, "AIRFLASH").FontSize(sizeSmall).Bold().TextColor(p.Ink).
+		ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
 			LetterSpacing(1.2).Padding(4, 4, 16, 4)
 
-		s.navItem(c, p, "Stats", pageStats)
-		s.navItem(c, p, "Receivers", pageReceivers)
-		s.navItem(c, p, "Settings", pageSettings)
+		s.navItem(c, p, s.t("Stats"), pageStats)
+		s.navItem(c, p, s.t("Receivers"), pageReceivers)
+		s.navItem(c, p, s.t("Settings"), pageSettings)
 
 		ui.Spacer(c).Grow(1)
 
 		// The engine's own state, always visible: whether audio is flowing is
 		// the one fact the user needs at a glance.
 		st := s.deps.State.Snapshot()
-		label, col := phaseLabel(p, st.Phase)
+		label, col := phaseLabel(s.deps.Words, p, st.Phase)
 		ui.Column(c).Padding(8, 4, 4, 4).Gap(4).Children(func() {
 			ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
 				ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
 				ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
 			})
 			if cfg.Mode == settings.ModeLightweight {
-				ui.Text(c, "LIGHTWEIGHT").FontSize(sizeSmall).TextColor(p.InkMuted).
+				ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).TextColor(p.InkMuted).
 					LetterSpacing(0.9)
 			}
 		}).BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
@@ -214,12 +224,12 @@ func (s *Shell) gaps(c *ui.Context, p palette, st engine.Metrics) {
 		ui.Row(c).FillWidth().Children(func() {
 			sectionLabel(c, p, "GAPS")
 			ui.Spacer(c).Grow(1)
-			ui.Text(c, gapSummary(st.Slots)).FontSize(sizeBody).
+			ui.Text(c, gapSummary(s.deps.Words, st.Slots)).FontSize(sizeBody).
 				TextColor(gapSummaryColor(p, st.Slots))
 		})
 
 		if len(st.Slots) == 0 {
-			ui.Text(c, "One mark per second of playback appears here. Nothing has been lost so far.").
+			ui.Text(c, s.t("One mark per second of playback appears here. Nothing has been lost so far.")).
 				FontSize(sizeBody).TextColor(p.InkMuted)
 			return
 		}
@@ -233,13 +243,13 @@ func (s *Shell) gaps(c *ui.Context, p palette, st engine.Metrics) {
 			ui.Text(c, fmt.Sprintf("%d s ago", len(st.Slots))).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
-			ui.Text(c, "now").FontSize(sizeSmall).TextColor(p.InkMuted)
+			ui.Text(c, s.t("now")).FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 	})
 }
 
 // gapSummary is the one line that answers whether anything was lost.
-func gapSummary(slots []engine.Slot) string {
+func gapSummary(words i18n.Translator, slots []engine.Slot) string {
 	gapped := 0
 	for _, s := range slots {
 		if s.Gapped() {
@@ -247,12 +257,12 @@ func gapSummary(slots []engine.Slot) string {
 		}
 	}
 	if len(slots) == 0 {
-		return "nothing measured yet"
+		return words.T("nothing measured yet")
 	}
 	if gapped == 0 {
-		return fmt.Sprintf("none in the last %d s", len(slots))
+		return fmt.Sprintf(words.T("none in the last %d s"), len(slots))
 	}
-	return fmt.Sprintf("%d of %d s lost audio", gapped, len(slots))
+	return fmt.Sprintf(words.T("%d of %d s lost audio"), gapped, len(slots))
 }
 
 func gapSummaryColor(p palette, slots []engine.Slot) ui.Color {
@@ -309,12 +319,12 @@ func (s *Shell) headline(c *ui.Context, p palette, cfg settings.Settings, st eng
 			if st.HasTotalLatency {
 				ui.Text(c, fmt.Sprintf("%.0f", st.TotalLatencyMs)).FontSize(sizeHero).Bold().
 					TextColor(p.Ink)
-				ui.Text(c, "ms").FontSize(sizeLead).TextColor(p.InkMuted)
-				band := bandFor(p, target, st.TotalLatencyMs, true)
+				ui.Text(c, s.t("ms")).FontSize(sizeLead).TextColor(p.InkMuted)
+				band := bandFor(s.deps.Words, p, target, st.TotalLatencyMs, true)
 				ui.Text(c, band.Label).FontSize(sizeBody).TextColor(band.Color)
 			} else {
-				ui.Text(c, "—").FontSize(sizeHero).Bold().TextColor(p.InkMuted)
-				ui.Text(c, "waiting for playback").FontSize(sizeBody).TextColor(p.InkMuted)
+				ui.Text(c, s.t("—")).FontSize(sizeHero).Bold().TextColor(p.InkMuted)
+				ui.Text(c, s.t("waiting for playback")).FontSize(sizeBody).TextColor(p.InkMuted)
 			}
 		})
 
@@ -362,7 +372,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 		})
 
 		if !st.HasTotalLatency {
-			ui.Text(c, "The measured latency appears here once playback starts.").
+			ui.Text(c, s.t("The measured latency appears here once playback starts.")).
 				FontSize(sizeBody).TextColor(p.InkMuted)
 			return
 		}
@@ -377,7 +387,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 		ui.Row(c).FillWidth().Children(func() {
 			ui.Text(c, fmt.Sprintf("%.0f ms", lo)).FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
-			ui.Text(c, fmt.Sprintf("target %d ms", int(target))).FontSize(sizeSmall).TextColor(p.InkMuted)
+			ui.Text(c, fmt.Sprintf(s.t("target %d ms"), int(target))).FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
 			ui.Text(c, fmt.Sprintf("%.0f ms", hi)).FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
@@ -693,10 +703,10 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 		// What the engine will actually be asked for, so the control is never
 		// a mystery.
 		effective := cfg.EffectiveLatencyMs(s.adapted())
-		line := fmt.Sprintf("The engine will be asked for %d ms", effective)
+		line := fmt.Sprintf(s.t("The engine will be asked for %d ms"), effective)
 		if cfg.LatencyAuto {
 			if effective > cfg.LatencyMs {
-				line += fmt.Sprintf(" · Auto raised it from your floor of %d ms", cfg.LatencyMs)
+				line += fmt.Sprintf(s.t(" · Auto raised it from your floor of %d ms"), cfg.LatencyMs)
 			} else {
 				line += " · Auto, at your floor"
 			}
@@ -704,7 +714,7 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 		ui.Text(c, line).FontSize(sizeSmall).TextColor(p.InkMuted)
 
 		if st.Phase == engine.PhaseStreaming {
-			ui.Text(c, "A new target applies to the next start.").FontSize(sizeSmall).TextColor(p.InkMuted)
+			ui.Text(c, s.t("A new target applies to the next start.")).FontSize(sizeSmall).TextColor(p.InkMuted)
 		}
 	})
 }
@@ -736,9 +746,9 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 			sectionLabel(c, p, "LOSSES")
 			ui.Spacer(c).Grow(1)
 			if unhealthy {
-				ui.Text(c, "something is being lost").FontSize(sizeBody).TextColor(p.Warning)
+				ui.Text(c, s.t("something is being lost")).FontSize(sizeBody).TextColor(p.Warning)
 			} else {
-				ui.Text(c, "nothing lost so far").FontSize(sizeBody).TextColor(p.Success)
+				ui.Text(c, s.t("nothing lost so far")).FontSize(sizeBody).TextColor(p.Success)
 			}
 		})
 
@@ -752,7 +762,7 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 		s.countRow(c, p, "Retransmit queue overflow", st.RetransmitQueueDrops)
 
 		if st.FeedbackDelayed {
-			ui.Text(c, "The receiver's feedback is late, which is what a rising ping looks like.").
+			ui.Text(c, s.t("The receiver's feedback is late, which is what a rising ping looks like.")).
 				FontSize(sizeBody).TextColor(p.Warning)
 		}
 	})
@@ -773,9 +783,9 @@ func (s *Shell) capture(c *ui.Context, p palette, st engine.Metrics) {
 			sectionLabel(c, p, "CAPTURE")
 			ui.Spacer(c).Grow(1)
 			if unhealthy {
-				ui.Text(c, "the PC's own audio is faltering").FontSize(sizeBody).TextColor(p.Warning)
+				ui.Text(c, s.t("the PC's own audio is faltering")).FontSize(sizeBody).TextColor(p.Warning)
 			} else {
-				ui.Text(c, "sound is being captured").FontSize(sizeBody).TextColor(p.Success)
+				ui.Text(c, s.t("sound is being captured")).FontSize(sizeBody).TextColor(p.Success)
 			}
 		})
 
@@ -816,8 +826,8 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 
 	ui.Column(c).FillWidth().Gap(14).Children(func() {
 		if len(found) == 0 {
-			ui.Text(c, "Looking for receivers…").FontSize(sizeBody).TextColor(p.Ink)
-			ui.Text(c, "The PC and the HomePod have to be on the same network.").
+			ui.Text(c, s.t("Looking for receivers…")).FontSize(sizeBody).TextColor(p.Ink)
+			ui.Text(c, s.t("The PC and the HomePod have to be on the same network.")).
 				FontSize(sizeBody).TextColor(p.InkMuted)
 			return
 		}
@@ -836,10 +846,10 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 						}
 						ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk)
 						if rec.IsGroup() && !rec.Complete() {
-							ui.Text(c, "incomplete").FontSize(sizeSmall).TextColor(p.Warning)
+							ui.Text(c, s.t("incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
 						}
 						if !rec.Online {
-							ui.Text(c, "offline").FontSize(sizeSmall).TextColor(p.InkMuted)
+							ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
 						}
 					})
 					detail := rec.Address
@@ -847,7 +857,7 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 						detail = name + " · " + rec.Address
 					}
 					if rec.IsGroup() {
-						detail = fmt.Sprintf("stereo · %d/2 · %s", len(rec.Members), detail)
+						detail = fmt.Sprintf(s.t("stereo · %d/2 · %s"), len(rec.Members), detail)
 					}
 					ui.Text(c, detail).FontSize(sizeSmall).TextColor(p.InkMuted)
 				})
@@ -858,7 +868,7 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 				// has gone cannot be reached, so neither offers an action
 				// rather than one that would sound wrong or time out.
 				if rec.Complete() && rec.Online {
-					if ui.Button(c, "Play").Clicked() && s.deps.OnPlay != nil {
+					if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
 						s.deps.OnPlay(rec)
 					}
 				}
@@ -879,7 +889,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 		ui.Column(c).Gap(8).Children(func() {
 			light := cfg.Mode == settings.ModeLightweight
 			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, "Lightweight mode").FontSize(sizeBody).TextColor(p.Ink)
+				ui.Text(c, s.t("Lightweight mode")).FontSize(sizeBody).TextColor(p.Ink)
 				ui.Spacer(c).Grow(1)
 				ui.Switch(c, &light).OnChange(func() {
 					if s.deps.OnMode == nil {
@@ -892,9 +902,9 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 					}
 				})
 			})
-			ui.Text(c, "Drops the window material and the trend chart, and samples the engine "+
+			ui.Text(c, s.t("Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
-				"either way.").FontSize(sizeSmall).TextColor(p.InkMuted)
+				"either way.")).FontSize(sizeSmall).TextColor(p.InkMuted)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
@@ -903,7 +913,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 		ui.Column(c).Gap(8).Children(func() {
 			login := cfg.StartAtLogin
 			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, "Start when I sign in").FontSize(sizeBody).TextColor(p.Ink)
+				ui.Text(c, s.t("Start when I sign in")).FontSize(sizeBody).TextColor(p.Ink)
 				ui.Spacer(c).Grow(1)
 				ui.Switch(c, &login).OnChange(func() {
 					if s.deps.OnStartAtLogin != nil {
@@ -911,8 +921,8 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 					}
 				})
 			})
-			ui.Text(c, "The shell starts in the tray at sign-in and connects to the "+
-				"last receiver, so nothing has to be opened.").
+			ui.Text(c, s.t("The shell starts in the tray at sign-in and connects to the "+
+				"last receiver, so nothing has to be opened.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
@@ -922,7 +932,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 		ui.Column(c).Gap(8).Children(func() {
 			reconnect := cfg.Reconnect
 			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, "Reconnect a dropped stream").FontSize(sizeBody).TextColor(p.Ink)
+				ui.Text(c, s.t("Reconnect a dropped stream")).FontSize(sizeBody).TextColor(p.Ink)
 				ui.Spacer(c).Grow(1)
 				ui.Switch(c, &reconnect).OnChange(func() {
 					if s.deps.OnReconnect != nil {
@@ -930,16 +940,16 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 					}
 				})
 			})
-			ui.Text(c, "When the connection drops, start it again. Each retry waits "+
+			ui.Text(c, s.t("When the connection drops, start it again. Each retry waits "+
 				"twice as long as the one before, up to eight seconds, and a stream that "+
 				"ran for ten seconds starts the count over. A HomePod that asks for a PIN "+
-				"is not retried: that needs you.").
+				"is not retried: that needs you.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 
 			if cfg.Reconnect {
 				attempts := float64(cfg.ReconnectAttempts)
 				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "Attempts").FontSize(sizeSmall).TextColor(p.InkMuted)
+					ui.Text(c, s.t("Attempts")).FontSize(sizeSmall).TextColor(p.InkMuted)
 					ui.Slider(c, &attempts, 1, 20).Grow(1).OnChange(func() {
 						if s.deps.OnReconnectAttempts != nil {
 							s.deps.OnReconnectAttempts(int(attempts))
@@ -953,27 +963,27 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
 		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "Closing the window").FontSize(sizeBody).TextColor(p.Ink)
-			ui.Text(c, "Closing releases the window and everything it holds. Playback continues: "+
-				"the engine is a separate process, and the app stays in the tray.").
+			ui.Text(c, s.t("Closing the window")).FontSize(sizeBody).TextColor(p.Ink)
+			ui.Text(c, s.t("Closing releases the window and everything it holds. Playback continues: "+
+				"the engine is a separate process, and the app stays in the tray.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 	})
 }
 
 // phaseLabel turns an engine phase into a word and a colour.
-func phaseLabel(p palette, phase engine.StreamPhase) (string, ui.Color) {
+func phaseLabel(words i18n.Translator, p palette, phase engine.StreamPhase) (string, ui.Color) {
 	switch phase {
 	case engine.PhaseStreaming:
-		return "Playing", p.Success
+		return words.T("Playing"), p.Success
 	case engine.PhaseConnecting, engine.PhaseNegotiating:
-		return "Connecting", p.Warning
+		return words.T("Connecting"), p.Warning
 	case engine.PhaseFailed:
-		return "Failed", p.Danger
+		return words.T("Failed"), p.Danger
 	case engine.PhaseStopped:
-		return "Stopped", p.InkMuted
+		return words.T("Stopped"), p.InkMuted
 	default:
-		return "Idle", p.InkMuted
+		return words.T("Idle"), p.InkMuted
 	}
 }
 

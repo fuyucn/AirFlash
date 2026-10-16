@@ -7,6 +7,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 )
@@ -279,7 +280,7 @@ func TestAReconnectSaysWhichAttemptItIsOn(t *testing.T) {
 	st := streamingState()
 	st.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
 	// No retry in progress: an ordinary connection.
-	if got := phaseNote(st.Snapshot()); got != "connecting…" {
+	if got := phaseNote(i18n.For(i18n.English), st.Snapshot()); got != "connecting…" {
 		t.Errorf("note = %q, want an ordinary connecting message", got)
 	}
 
@@ -287,7 +288,7 @@ func TestAReconnectSaysWhichAttemptItIsOn(t *testing.T) {
 	st2 := streamingState()
 	st2.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
 	st2.SetReconnecting(2, 5)
-	if got := phaseNote(st2.Snapshot()); got != "reconnecting 2/5" {
+	if got := phaseNote(i18n.For(i18n.English), st2.Snapshot()); got != "reconnecting 2/5" {
 		t.Errorf("note = %q, want the attempt named: it is what says the app is still on it", got)
 	}
 }
@@ -333,5 +334,56 @@ func TestAQuietPCBeforeAnythingIsMeasuredIsNot(t *testing.T) {
 
 	if ui.NewTester(panel.View, panelWidth, 600).HasText("no sound") {
 		t.Error("a fresh session is reported as silent before anything was measured")
+	}
+}
+
+// TestEveryInterfaceStringHasAChineseEntry is the guard against a translation
+// that looks done and is not.
+//
+// The English keys are the literals in the source, so the list is written here
+// rather than read back from the view: a view that had been half translated
+// would not say so. What is asserted is that each one is a key in the table,
+// because a missing key silently falls back to its English - which is exactly
+// how four settings descriptions stayed English while the page looked
+// translated.
+func TestEveryInterfaceStringHasAChineseEntry(t *testing.T) {
+	// Every string the interface shows, as it appears in the source.
+	shown := []string{
+		// Navigation and phases.
+		"Stats", "Receivers", "Settings", "Idle", "Playing", "Stopped", "Failed",
+		"Connecting", "connecting…", "no reading yet", "could not connect",
+		// Receivers.
+		"Looking for receivers…", "The PC and the HomePod have to be on the same network.",
+		"offline", "pair incomplete", "Play", "Stop", "VOL",
+		// Readings.
+		"Target", "ms delay", "on target", "waiting for playback", "nothing measured yet",
+		"slightly over target", "well over target",
+		// The charts.
+		"LATENCY OVER TIME", "GAPS", "VOLUME", "CAPTURE", "LOSSES", "LATENCY",
+		"One mark per second of playback appears here. Nothing has been lost so far.",
+		"The measured latency appears here once playback starts.",
+		"%d of %d s lost audio", "none in the last %d s",
+		// Settings.
+		"Lightweight mode",
+		"Drops the window material and the trend chart, and samples the engine once a second. The audio path is untouched: the engine keeps its own process either way.",
+		"Start when I sign in",
+		"The shell starts in the tray at sign-in and connects to the last receiver, so nothing has to be opened.",
+		"Reconnect a dropped stream",
+		"When the connection drops, start it again. Each retry waits twice as long as the one before, up to eight seconds, and a stream that ran for ten seconds starts the count over. A HomePod that asks for a PIN is not retried: that needs you.",
+		"Closing the window",
+		"Closing releases the window and everything it holds. Playback continues: the engine is a separate process, and the app stays in the tray.",
+		"Quit",
+		// Latency modes.
+		"Custom", "Auto", "The engine will be asked for %d ms",
+		"A new target applies to the next start.",
+	}
+
+	tru := i18n.For(i18n.Chinese)
+	for _, key := range shown {
+		if tru.T(key) == key {
+			// A key that is its own translation has no entry, and would show
+			// English on a Chinese interface.
+			t.Errorf("%q has no Chinese entry, so it would show English", key)
+		}
 	}
 }

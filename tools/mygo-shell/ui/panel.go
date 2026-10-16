@@ -6,6 +6,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 )
 
@@ -36,6 +37,11 @@ type Panel struct {
 // NewPanel builds the tray panel view.
 func NewPanel(d Deps) *Panel {
 	return &Panel{deps: d, volume: 1}
+}
+
+// t translates one of the interface's strings, as Shell does.
+func (p *Panel) t(english string) string {
+	return p.deps.Words.T(english)
 }
 
 // panelPad is the room the panel leaves around its content, in DIPs.
@@ -104,9 +110,9 @@ func (p *Panel) View(c *ui.Context) {
 
 // header names the product and says, in one word, what the engine is doing.
 func (p *Panel) header(c *ui.Context, pal palette, cfg settings.Settings, st engine.Metrics) {
-	label, col := phaseLabel(pal, st.Phase)
+	label, col := phaseLabel(p.deps.Words, pal, st.Phase)
 	ui.Row(c).FillWidth().Padding(0, 0, 10, 0).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "AIRFLASH").FontSize(sizeSmall).Bold().TextColor(pal.Ink).
+		ui.Text(c, p.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(pal.Ink).
 			LetterSpacing(1.2)
 		ui.Spacer(c).Grow(1)
 		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
@@ -126,8 +132,8 @@ func (p *Panel) receivers(c *ui.Context, pal palette, st engine.Metrics) {
 
 	if len(found) == 0 {
 		ui.Column(c).FillWidth().Padding(0, 6).Gap(6).Children(func() {
-			ui.Text(c, "Looking for receivers…").FontSize(sizeBody).TextColor(pal.Ink)
-			ui.Text(c, "The PC and the HomePod have to be on the same network.").
+			ui.Text(c, p.t("Looking for receivers…")).FontSize(sizeBody).TextColor(pal.Ink)
+			ui.Text(c, p.t("The PC and the HomePod have to be on the same network.")).
 				FontSize(sizeSmall).TextColor(pal.InkMuted)
 		})
 		return
@@ -188,17 +194,17 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 			case !rec.Complete():
 				// Half a stereo pair cannot be played to, so it says so
 				// instead of offering a control that would sound wrong.
-				ui.Text(c, "pair incomplete").FontSize(sizeSmall).TextColor(pal.Warning)
+				ui.Text(c, p.t("pair incomplete")).FontSize(sizeSmall).TextColor(pal.Warning)
 			case !rec.Online && !playing:
 				// An offline receiver cannot be played to, so it says so rather
 				// than offering a Play that would time out.
-				ui.Text(c, "offline").FontSize(sizeSmall).TextColor(pal.InkMuted)
+				ui.Text(c, p.t("offline")).FontSize(sizeSmall).TextColor(pal.InkMuted)
 			case playing:
-				if ui.Button(c, "Stop").Clicked() && p.deps.OnStop != nil {
+				if ui.Button(c, p.t("Stop")).Clicked() && p.deps.OnStop != nil {
 					p.deps.OnStop()
 				}
 			default:
-				if ui.Button(c, "Play").Clicked() && p.deps.OnPlay != nil {
+				if ui.Button(c, p.t("Play")).Clicked() && p.deps.OnPlay != nil {
 					p.deps.OnPlay(rec)
 				}
 			}
@@ -232,7 +238,7 @@ func (p *Panel) silenceRow(c *ui.Context, pal palette, st engine.Metrics) {
 		seconds = 1
 	}
 	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, fmt.Sprintf("no sound from the PC for %d s", seconds)).
+		ui.Text(c, fmt.Sprintf(p.t("no sound from the PC for %d s"), seconds)).
 			FontSize(sizeSmall).TextColor(pal.Warning)
 	})
 }
@@ -242,7 +248,7 @@ func (p *Panel) silenceRow(c *ui.Context, pal palette, st engine.Metrics) {
 func (p *Panel) volumeRow(c *ui.Context, pal palette, rec discovery.Receiver) {
 	vol := p.volume
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, "VOL").FontSize(sizeSmall).TextColor(pal.InkMuted).LetterSpacing(0.9)
+		ui.Text(c, p.t("VOL")).FontSize(sizeSmall).TextColor(pal.InkMuted).LetterSpacing(0.9)
 		ui.Slider(c, &vol, 0, 1).Grow(1).OnChange(func() {
 			p.volume = vol
 			p.volumeKnown = true
@@ -265,45 +271,45 @@ func (p *Panel) reading(c *ui.Context, pal palette, cfg settings.Settings, st en
 
 	ui.Row(c).FillWidth().Padding(0, 4).AlignItems(ui.End).Children(func() {
 		if st.HasTotalLatency {
-			band := bandFor(pal, target, st.TotalLatencyMs, true)
+			band := bandFor(p.deps.Words, pal, target, st.TotalLatencyMs, true)
 			ui.Row(c).Gap(8).AlignItems(ui.End).Children(func() {
 				ui.Text(c, fmt.Sprintf("%.0f", st.TotalLatencyMs)).
 					FontSize(sizeTitle).Bold().TextColor(pal.Ink)
-				ui.Text(c, "ms delay").FontSize(sizeSmall).TextColor(pal.InkMuted)
+				ui.Text(c, p.t("ms delay")).FontSize(sizeSmall).TextColor(pal.InkMuted)
 			})
 			ui.Spacer(c).Grow(1)
 			ui.Text(c, band.Label).FontSize(sizeSmall).TextColor(band.Color)
 			return
 		}
 
-		ui.Text(c, fmt.Sprintf("TARGET %d MS", int(target))).
+		ui.Text(c, fmt.Sprintf(p.t("TARGET %d MS"), int(target))).
 			FontSize(sizeSmall).TextColor(pal.InkMuted)
 		ui.Spacer(c).Grow(1)
-		ui.Text(c, phaseNote(st)).FontSize(sizeSmall).TextColor(phaseNoteColor(pal, st))
+		ui.Text(c, phaseNote(p.deps.Words, st)).FontSize(sizeSmall).TextColor(phaseNoteColor(pal, st))
 	})
 }
 
 // phaseNote is what the engine is doing, in words a user recognises. The engine
 // reports its own phase names, which are its internals: "negotiating" and
 // "handshake_complete" are not something to show a person waiting for music.
-func phaseNote(st engine.Metrics) string {
+func phaseNote(words i18n.Translator, st engine.Metrics) string {
 	switch st.Phase {
 	case engine.PhaseConnecting, engine.PhaseNegotiating:
 		if st.Reconnecting {
-			return fmt.Sprintf("reconnecting %d/%d", st.ReconnectAttempt, st.ReconnectMax)
+			return fmt.Sprintf(words.T("reconnecting %d/%d"), st.ReconnectAttempt, st.ReconnectMax)
 		}
-		return "connecting…"
+		return words.T("connecting…")
 	case engine.PhaseFailed:
 		// The engine's error text is the one thing that says why, and it is
 		// usually the most useful line on the panel.
 		if st.Detail != "" {
 			return st.Detail
 		}
-		return "could not connect"
+		return words.T("could not connect")
 	case engine.PhaseStopped:
-		return "stopped"
+		return words.T("stopped")
 	default:
-		return "no reading yet"
+		return words.T("no reading yet")
 	}
 }
 
@@ -321,14 +327,14 @@ func phaseNoteColor(p palette, st engine.Metrics) ui.Color {
 // footer is the way to the window, and the way out.
 func (p *Panel) footer(c *ui.Context, pal palette) {
 	ui.Row(c).FillWidth().Gap(8).Padding(10, 0, 0, 0).Children(func() {
-		if ui.Button(c, "Stats").Clicked() && p.deps.OnOpenWindow != nil {
+		if ui.Button(c, p.t("Stats")).Clicked() && p.deps.OnOpenWindow != nil {
 			p.deps.OnOpenWindow("stats")
 		}
-		if ui.Button(c, "Settings").Clicked() && p.deps.OnOpenWindow != nil {
+		if ui.Button(c, p.t("Settings")).Clicked() && p.deps.OnOpenWindow != nil {
 			p.deps.OnOpenWindow("settings")
 		}
 		ui.Spacer(c).Grow(1)
-		if ui.Button(c, "Quit").Clicked() && p.deps.OnQuit != nil {
+		if ui.Button(c, p.t("Quit")).Clicked() && p.deps.OnQuit != nil {
 			p.deps.OnQuit()
 		}
 	}).BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(pal.Hairline)
