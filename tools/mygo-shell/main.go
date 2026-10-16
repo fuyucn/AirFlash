@@ -22,6 +22,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/adapt"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/autostart"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/enginebin"
@@ -34,15 +35,30 @@ func main() {
 	var (
 		enginePath = flag.String("engine", "", "path to the airflash-engine executable")
 		probeJSON  = flag.String("probe", "", "write a start-up report as JSON and exit")
+		// startedByLogin is set by the startup entry this app writes. It is what
+		// separates a launch at login from one by hand: the first stays quiet and
+		// connects to the last receiver, the second opens the panel.
+		startedByLogin = flag.Bool("startup", false, "started by the machine's login, not by hand")
 	)
 	flag.Parse()
 
 	cfg := settings.Open(settings.DefaultPath())
 
+	// Keep the startup entry in step with the setting, whichever way the truth
+	// moved: the registry is read rather than the settings, because a user can
+	// remove the entry by hand and an earlier install can leave one this one
+	// does not know about.
+	if on, err := autostart.Enabled(); err != nil {
+		log.Printf("autostart: could not read the startup entry: %v", err)
+	} else if on != cfg.Current().StartAtLogin {
+		cfg.Update(func(s *settings.Settings) { s.StartAtLogin = on })
+	}
+
 	app := &App{
-		settings: cfg,
-		life:     shell.New(),
-		state:    engine.NewState(),
+		startedByLogin: *startedByLogin,
+		settings:       cfg,
+		life:           shell.New(),
+		state:          engine.NewState(),
 	}
 
 	if *enginePath != "" {
@@ -63,10 +79,14 @@ func main() {
 
 // App owns the shell's runtime objects.
 type App struct {
-	enginePath string
-	settings   *settings.Store
-	life       *shell.Lifecycle
-	state      *engine.State
+	// startedByLogin says the machine launched this, not a person. A launch by
+	// hand opens the panel; one at login stays in the tray and connects to the
+	// last receiver if the settings ask for it.
+	startedByLogin bool
+	enginePath     string
+	settings       *settings.Store
+	life           *shell.Lifecycle
+	state          *engine.State
 
 	client atomic.Pointer[engine.Client]
 	win    atomic.Pointer[mygo.Window]
@@ -119,6 +139,12 @@ func (a *App) run() {
 	mygo.App.WhenReady(func() {
 		a.installTray()
 		a.startDiscovery()
+		// A launch at login is the machine's, not a person's: nothing is shown,
+		// and the last receiver is connected to if that is what was asked for. A
+		// launch by hand stays as it was, and the user opens the panel.
+		if a.startedByLogin && a.settings.Current().AutoConnect {
+			a.connectToLast()
+		}
 	})
 
 	if err := mygo.App.Run(); err != nil {
@@ -205,6 +231,14 @@ func (a *App) openWindow(page string) {
 			// is also what frees a webview's process tree when switching away.
 			a.life.Close()
 			a.openWindow(page)
+		},
+		OnStartAtLogin: func(on bool) {
+			a.settings.Update(func(s *settings.Settings) { s.StartAtLogin = on })
+			// The setting is a request to change the registry, and the registry
+			// is the truth: it is written immediately, so the two cannot drift.
+			if err := autostart.Set(on); err != nil {
+				log.Printf("autostart: %v", err)
+			}
 		},
 		OnReconnect: func(on bool) {
 			a.settings.Update(func(s *settings.Settings) { s.Reconnect = on })
@@ -475,6 +509,32 @@ func (a *App) startStreamTo(peers []engine.Peer) {
 		return
 	}
 	go a.runSession(session{peers: peers})
+}
+
+// connectToLast starts a session on the receiver the user last played to.
+//
+// The address was stored when that session started, which is what a login launch
+// has to work from: discovery has not run yet, so the receiver's name is not
+// known here, only where it was. The last one is used rather than anything found
+// by scanning, because a scan at login can find a different device and the user
+// asked for the one they were using.
+func (a *App) connectToLast() {
+	host := a.settings.Current().LastPeer
+	if host == "" {
+		return
+	}
+	// The receiver's id is what the panel shows the session against, and the
+	// stored value is a host. Discovery has not run yet, so the receiver cannot
+	// be looked up here; a later browse repairs it, and until then the row is
+	// chosen by its address rather than by name.
+	for _, r := range a.Receivers() {
+		if r.Address == host {
+			id := r.ID
+			a.playing.Store(&id)
+			break
+		}
+	}
+	a.startStreamTo([]engine.Peer{{Host: host, Port: 7000}})
 }
 
 func (a *App) stopStream() {

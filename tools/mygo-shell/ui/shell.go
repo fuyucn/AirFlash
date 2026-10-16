@@ -40,6 +40,8 @@ type Deps struct {
 	// without it the action would fall back to whatever discovery listed
 	// first, which is not necessarily what is actually playing.
 	PlayingReceiver func() *discovery.Receiver
+	// OnStartAtLogin turns the start-with-the-machine setting on or off.
+	OnStartAtLogin func(bool)
 	// OnReconnect turns the retry-a-dropped-session setting on or off.
 	OnReconnect func(bool)
 	// OnReconnectAttempts sets how many times to try.
@@ -893,6 +895,25 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			ui.Text(c, "Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
 				"either way.").FontSize(sizeSmall).TextColor(p.InkMuted)
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+		// Starting with the machine. The desktop host does this through the same
+		// Run key, so the two are indistinguishable to the user.
+		ui.Column(c).Gap(8).Children(func() {
+			login := cfg.StartAtLogin
+			ui.Row(c).FillWidth().Children(func() {
+				ui.Text(c, "Start when I sign in").FontSize(sizeBody).TextColor(p.Ink)
+				ui.Spacer(c).Grow(1)
+				ui.Switch(c, &login).OnChange(func() {
+					if s.deps.OnStartAtLogin != nil {
+						s.deps.OnStartAtLogin(login)
+					}
+				})
+			})
+			ui.Text(c, "The shell starts in the tray at sign-in and connects to the "+
+				"last receiver, so nothing has to be opened.").
+				FontSize(sizeSmall).TextColor(p.InkMuted)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 

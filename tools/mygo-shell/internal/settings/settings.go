@@ -58,6 +58,10 @@ type Settings struct {
 	// the target at a session boundary, never during one.
 	Adapt bool `json:"adapt"`
 
+	// StartAtLogin launches the shell when the machine starts, as the desktop
+	// host does through the same Run key.
+	StartAtLogin bool `json:"start_at_login"`
+
 	// Reconnect retries a session that dropped, which is what the desktop host
 	// calls ForceReconnect. Off by default: reaching for a speaker again by
 	// itself is something to ask for.
