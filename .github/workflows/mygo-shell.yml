@@ -81,7 +81,7 @@ jobs:
           # panel. The build succeeds either way, so the subsystem is read
           # back from the executable and this step fails if a later change
           # drops the flag.
-          uv run python ../../scripts/check_gui_subsystem.py 'artifacts/shell/AirFlash.exe'
+          uv run python (Join-Path $env:GITHUB_WORKSPACE 'scripts/check_gui_subsystem.py') 'artifacts/shell/AirFlash.exe'
 
       - name: Start-up report, and prove the engine is inside
         shell: pwsh
