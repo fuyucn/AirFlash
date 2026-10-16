@@ -74,6 +74,7 @@ jobs:
         run: |
           Push-Location tools/latency-probe/mygo
           bun install
+          go mod download
           go run github.com/egoist/mygo/cmd/mygo@latest build -platform windows/amd64
           Pop-Location
           Copy-Item 'tools/latency-probe/mygo/build/windows-amd64/AirFlash Probe.exe' 'artifacts/probe/AirFlash Probe.exe'
