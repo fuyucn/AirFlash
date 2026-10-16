@@ -47,6 +47,10 @@ type Deps struct {
 	// OnLanguage changes the language, which rebuilds the window so the change
 	// is not half applied.
 	OnLanguage func(string)
+	// OnReceiverOption changes one field of one receiver's own settings. The
+	// field is named rather than the whole struct, so changing one leaves the
+	// others as they were.
+	OnReceiverOption func(receiverID, field string, value any)
 	// OnStartAtLogin turns the start-with-the-machine setting on or off.
 	OnStartAtLogin func(bool)
 	// OnReconnect turns the retry-a-dropped-session setting on or off.
@@ -71,6 +75,10 @@ const (
 type Shell struct {
 	deps Deps
 	page page
+	// tuning is the receiver whose own settings are open, or "" when none is.
+	// It is the window's, not the app's: it is a view state that lasts as long as
+	// the window does, like the page.
+	tuning string
 	// entered is when the window opened, for the entrance animation.
 	entered time.Time
 }
@@ -872,12 +880,85 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 						s.deps.OnPlay(rec)
 					}
 				}
+				// The way to a receiver's own settings. Always there, rather than
+				// only once it has some: otherwise a receiver that has never been
+				// tuned could never be, and the first thing a user wants to change
+				// is the device they have just added.
+				if ui.Button(c, s.t("Tune")).Clicked() {
+					s.tuning = rec.ID
+				}
 			})
 			// One dashed rule under each receiver, which is what separates
 			// them: the same divider the panel and the sections use.
 			row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+			// What this receiver does for itself. It is shown once the receiver
+			// has a setting of its own, or while it is open, because a row per
+			// device for a setting nobody has changed says the same thing three
+			// times over and hides the one that is different.
+			if s.tuning == rec.ID || cfg.Options(rec.ID).HasOwn() {
+				s.receiverOptions(c, p, cfg, rec)
+			}
 		}
 	})
+}
+
+// receiverOptions is one receiver's own settings: the three that are worth
+// having per device.
+//
+// A HomePod and an Apple TV rarely want the same buffer: the HomePod is further
+// from the router, or already playing for something else, and the one setting
+// that fixes a stutter is target latency. Leaving it global means every device
+// is tuned for whichever happened to be tuned last.
+func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings, rec discovery.Receiver) {
+	opts := cfg.Options(rec.ID)
+	effective := cfg.LatencyFor(rec.ID)
+	own := opts.LatencyMs != nil
+
+	// The modes, plus "use the global setting": a receiver that has set nothing
+	// follows the global one, and that is the state to be able to get back to.
+	choices := settings.LatencyChoices()
+	labels := make([]string, 0, len(choices)+1)
+	labels = append(labels, s.t("Use global setting"))
+	for _, mode := range choices {
+		labels = append(labels, settings.LatencyLabels()[mode])
+	}
+	index := 0
+	if own {
+		for i, mode := range choices {
+			if settings.NamedLatencyMs(mode) == effective {
+				index = i + 1
+			}
+		}
+	}
+
+	ui.Row(c).FillWidth().Padding(22, 4, 4, 4).Gap(14).Children(func() {
+		sectionLabel(c, p, s.t("LATENCY"))
+		seg := ui.Segmented(c, &index, labels...)
+		if seg.Changed() && s.deps.OnReceiverOption != nil {
+			if index == 0 {
+				// Back to the global setting, which is "unset" rather than a
+				// value, so the field is cleared rather than written.
+				s.deps.OnReceiverOption(rec.ID, "latency_ms", nil)
+				return
+			}
+			if index-1 < len(choices) {
+				s.deps.OnReceiverOption(rec.ID, "latency_ms",
+					settings.NamedLatencyMs(choices[index-1]))
+			}
+		}
+		ui.Text(c, fmt.Sprintf("%d ms%s", effective, ownSuffix(s.t, own))).
+			FontSize(sizeSmall).TextColor(p.InkMuted)
+	})
+}
+
+// ownSuffix marks a value this receiver set itself, so the row says which of the
+// two numbers on screen is the device's own and which is inherited.
+func ownSuffix(words func(string) string, own bool) string {
+	if own {
+		return " · " + words("its own")
+	}
+	return " · " + words("global")
 }
 
 // settingsPage holds the mode switch, which is the one setting that changes

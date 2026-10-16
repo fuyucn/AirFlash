@@ -186,3 +186,60 @@ func TestTheNamedLatenciesAreTheDesktopHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestAReceiverOverridesOnlyWhatItSets(t *testing.T) {
+	// A receiver with one field set inherits the rest. This is the whole reason
+	// the fields are pointers: a HomePod that wants 500 ms while everything else
+	// uses the global 200 needs one field, not a full copy.
+	s := Default()
+	s.LatencyMs = 200
+	s.Gain = 1.0
+	five := 500
+	s.PerReceiver = map[string]ReceiverOptions{
+		"homepod": {LatencyMs: &five},
+	}
+
+	if got := s.LatencyFor("homepod"); got != 500 {
+		t.Errorf("homepod latency = %d, want its own 500", got)
+	}
+	if got := s.LatencyFor("something-else"); got != 200 {
+		t.Errorf("another receiver latency = %d, want the global 200", got)
+	}
+	// Nothing else was set, so the rest is the global.
+	if got := s.GainFor("homepod"); got != 1.0 {
+		t.Errorf("homepod gain = %v, want the global 1.0", got)
+	}
+}
+
+func TestAReceiverWithNothingSetUsesEverythingGlobal(t *testing.T) {
+	s := Default()
+	s.LatencyMs = 750
+	off := false
+	s.PerReceiver = map[string]ReceiverOptions{
+		// Present but empty: still the global for every field.
+		"tv": {Hidden: &off},
+	}
+	if got := s.LatencyFor("tv"); got != 750 {
+		t.Errorf("latency = %d, want the global 750", got)
+	}
+}
+
+func TestHiddenKeepsAReceiverWithoutForgettingIt(t *testing.T) {
+	// Hidden is the one setting that is not a value to inherit: it is a fact
+	// about one receiver, so it only ever comes from that receiver.
+	s := Default()
+	hidden := true
+	s.PerReceiver = map[string]ReceiverOptions{"tv": {Hidden: &hidden}}
+	shown := false
+	s.PerReceiver["other"] = ReceiverOptions{Hidden: &shown}
+
+	if !s.HiddenFor("tv") {
+		t.Error("a receiver set to hidden is shown")
+	}
+	if s.HiddenFor("other") {
+		t.Error("a receiver set to shown is hidden")
+	}
+	if s.HiddenFor("never-seen") {
+		t.Error("an unset receiver defaults to hidden")
+	}
+}

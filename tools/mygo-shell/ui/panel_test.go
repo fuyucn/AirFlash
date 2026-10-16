@@ -372,7 +372,7 @@ func TestEveryInterfaceStringHasAChineseEntry(t *testing.T) {
 		"When the connection drops, start it again. Each retry waits twice as long as the one before, up to eight seconds, and a stream that ran for ten seconds starts the count over. A HomePod that asks for a PIN is not retried: that needs you.",
 		"Closing the window",
 		"Closing releases the window and everything it holds. Playback continues: the engine is a separate process, and the app stays in the tray.",
-		"Quit",
+		"Quit", "Tune",
 		// Latency modes.
 		"Custom", "Auto", "The engine will be asked for %d ms",
 		"A new target applies to the next start.",

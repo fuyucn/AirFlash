@@ -76,6 +76,11 @@ type Settings struct {
 	// host bounds this at twenty.
 	ReconnectAttempts int `json:"reconnect_attempts"`
 
+	// PerReceiver holds one receiver's own settings, keyed by receiver id. An
+	// entry that is absent means "use the global setting", which is why every
+	// field is a pointer: nil is "not set" and a value is "overridden".
+	PerReceiver map[string]ReceiverOptions `json:"receivers"`
+
 	// Sessions is what previous sessions turned out to be, newest last. It is
 	// how the shell knows whether the network is actually getting worse.
 	Sessions []Session `json:"sessions"`
@@ -90,6 +95,22 @@ type Session struct {
 	SkippedPackets uint64    `json:"skipped_packets"`
 	ExpiredResends uint64    `json:"expired_resends"`
 	At             time.Time `json:"at"`
+}
+
+// ReceiverOptions is one receiver's own settings.
+//
+// Every field is a pointer, because nil means "use the global setting" rather
+// than "off": a HomePod that should stream at 500 ms while everything else uses
+// the global 200 needs one field set and the rest left alone.
+type ReceiverOptions struct {
+	// Volume is 0..100, as the engine takes it.
+	Volume *int `json:"volume,omitempty"`
+	// LatencyMs is the target for this receiver.
+	LatencyMs *int `json:"latency_ms,omitempty"`
+	// AutoConnect starts this receiver when it appears, or does not.
+	AutoConnect *bool `json:"auto_connect,omitempty"`
+	// Hidden keeps the receiver out of the panel without forgetting it.
+	Hidden *bool `json:"hidden,omitempty"`
 }
 
 // Default returns the starting settings: lightweight off, and a 500 ms target,
@@ -221,6 +242,71 @@ const maxSessions = 50
 // Lang is the language the interface is drawn in, with System resolved.
 func (s Settings) Lang() i18n.Language {
 	return i18n.For(i18n.Language(s.Language)).Lang
+}
+
+// LatencyFor is the target one receiver streams at: its own if it set one, the
+// global otherwise.
+func (s Settings) LatencyFor(id string) int {
+	if o, ok := s.PerReceiver[id]; ok && o.LatencyMs != nil {
+		return *o.LatencyMs
+	}
+	return s.EffectiveLatencyMs(0)
+}
+
+// GainFor is one receiver's own gain: its own if it set one, the global
+// otherwise.
+func (s Settings) GainFor(id string) float64 {
+	if o, ok := s.PerReceiver[id]; ok && o.Volume != nil {
+		return float64(*o.Volume) / 100
+	}
+	return s.Gain
+}
+
+// HiddenFor reports whether a receiver is kept out of the panel.
+//
+// Hidden is a fact about one receiver rather than a value to inherit, so it is
+// only ever that receiver's own, and an unseen receiver is shown.
+func (s Settings) HiddenFor(id string) bool {
+	if o, ok := s.PerReceiver[id]; ok && o.Hidden != nil {
+		return *o.Hidden
+	}
+	return false
+}
+
+// AutoConnectFor reports whether a receiver is started when it appears. An unset
+// receiver follows the global setting.
+func (s Settings) AutoConnectFor(id string) bool {
+	if o, ok := s.PerReceiver[id]; ok && o.AutoConnect != nil {
+		return *o.AutoConnect
+	}
+	return s.AutoConnect
+}
+
+// hasOwn reports whether a receiver has any setting of its own.
+//
+// A receiver with nothing set follows the global setting for everything, which
+// is the state most are in, and is what a list of receivers should say by
+// default rather than showing a row of controls that do nothing yet.
+func (o ReceiverOptions) HasOwn() bool {
+	return o.Volume != nil || o.LatencyMs != nil ||
+		o.AutoConnect != nil || o.Hidden != nil
+}
+
+// Options returns one receiver's own settings, creating them if they are absent,
+// so a caller can change one field without disturbing the rest.
+func (s *Settings) Options(id string) ReceiverOptions {
+	if s.PerReceiver == nil {
+		s.PerReceiver = map[string]ReceiverOptions{}
+	}
+	return s.PerReceiver[id]
+}
+
+// SetOptions stores one receiver's settings.
+func (s *Settings) SetOptions(id string, o ReceiverOptions) {
+	if s.PerReceiver == nil {
+		s.PerReceiver = map[string]ReceiverOptions{}
+	}
+	s.PerReceiver[id] = o
 }
 
 // EffectiveLatencyMs is the target to ask the engine for. With Auto on it is

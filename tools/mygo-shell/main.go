@@ -246,6 +246,34 @@ func (a *App) openWindow(page string) {
 			a.life.Close()
 			a.openWindow(page)
 		},
+		OnReceiverOption: func(id, field string, value any) {
+			a.settings.Update(func(s *settings.Settings) {
+				o := s.Options(id)
+				switch field {
+				case "latency_ms":
+					// nil clears the field, which is how a receiver goes back to
+					// the global setting; a value sets its own.
+					if value == nil {
+						o.LatencyMs = nil
+					} else if n, ok := value.(int); ok {
+						o.LatencyMs = &n
+					}
+				case "volume":
+					if n, ok := value.(int); ok {
+						o.Volume = &n
+					}
+				case "auto_connect":
+					if b, ok := value.(bool); ok {
+						o.AutoConnect = &b
+					}
+				case "hidden":
+					if b, ok := value.(bool); ok {
+						o.Hidden = &b
+					}
+				}
+				s.SetOptions(id, o)
+			})
+		},
 		OnLanguage: func(lang string) {
 			a.settings.Update(func(s *settings.Settings) { s.Language = lang })
 			// The words the window is drawn in, so the window is rebuilt. A
@@ -474,11 +502,24 @@ func (a *App) stopDiscovery() {
 }
 
 // Receivers returns what discovery has found.
+// Receivers is what discovery found, minus any receiver the user has hidden.
+//
+// A hidden receiver stays in the list the browse keeps, so it comes back when it
+// is un-hidden, and the panel shows only what the user chose to see.
 func (a *App) Receivers() []discovery.Receiver {
-	if r := a.receivers.Load(); r != nil {
-		return *r
+	found := a.receivers.Load()
+	if found == nil {
+		return nil
 	}
-	return nil
+	cfg := a.settings.Current()
+	out := make([]discovery.Receiver, 0, len(*found))
+	for _, r := range *found {
+		if cfg.HiddenFor(r.ID) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // playReceiver starts playback on what discovery found. A stereo pair sends
@@ -498,7 +539,7 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	// is told hosts, so without this the shell would only know an address, and
 	// an address does not say which receiver in the list it belongs to.
 	a.playing.Store(&r.ID)
-	a.startStreamTo(peers)
+	a.startStreamTo(r.ID, peers)
 }
 
 // PlayingReceiver returns the receiver playback is going to, or nil.
@@ -527,11 +568,11 @@ func (a *App) PlayingReceiver() *discovery.Receiver {
 // The session lives in its own goroutine, so the surfaces stay responsive while
 // the engine is being brought up, and so the retry loop can wait without holding
 // anything the UI needs.
-func (a *App) startStreamTo(peers []engine.Peer) {
+func (a *App) startStreamTo(receiverID string, peers []engine.Peer) {
 	if len(peers) == 0 {
 		return
 	}
-	go a.runSession(session{peers: peers})
+	go a.runSession(session{peers: peers, receiverID: receiverID})
 }
 
 // connectToLast starts a session on the receiver the user last played to.
@@ -554,10 +595,13 @@ func (a *App) connectToLast() {
 		if r.Address == host {
 			id := r.ID
 			a.playing.Store(&id)
-			break
+			a.startStreamTo(id, []engine.Peer{{Host: host, Port: 7000}})
+			return
 		}
 	}
-	a.startStreamTo([]engine.Peer{{Host: host, Port: 7000}})
+	// The receiver has not been found yet, so its own settings cannot be looked
+	// up and the global ones are used.
+	a.startStreamTo("", []engine.Peer{{Host: host, Port: 7000}})
 }
 
 func (a *App) stopStream() {

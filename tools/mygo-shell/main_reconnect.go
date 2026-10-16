@@ -23,6 +23,10 @@ import (
 // same hosts, at the target the shell worked out for them.
 type session struct {
 	peers []engine.Peer
+	// receiverID is the receiver these peers belong to, which is what its own
+	// settings are keyed by. A stereo pair is one receiver with two halves, so a
+	// session has one id and two peers.
+	receiverID string
 	// startedAt is when this attempt began streaming, which is what separates a
 	// good connection that dropped from one that never worked.
 	startedAt time.Time
@@ -121,8 +125,15 @@ func (a *App) startAttempt(s session) {
 
 	cfg := a.settings.Current()
 	opts := engine.DefaultStreamOptions()
-	opts.LatencyMs = cfg.EffectiveLatencyMs(a.adaptedTarget())
-	opts.Gain = cfg.Gain
+	// The receiver's own settings where it has them, keyed by its id: a stereo
+	// pair is one receiver with two halves, so its settings are the pair's.
+	if id := s.receiverID; id != "" {
+		opts.LatencyMs = cfg.LatencyFor(id)
+		opts.Gain = cfg.GainFor(id)
+	} else {
+		opts.LatencyMs = cfg.EffectiveLatencyMs(a.adaptedTarget())
+		opts.Gain = cfg.Gain
+	}
 	opts.SampleRate = cfg.SampleRate
 	a.state.ResetSession()
 

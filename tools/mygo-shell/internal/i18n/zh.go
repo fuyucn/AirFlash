@@ -102,4 +102,9 @@ var chinese = map[string]string{
 	"slightly over target":          "略高于目标",
 	"on target":                     "符合目标",
 	"waiting for the first reading": "等待第一次读数",
+	"Use global setting":            "跟随全局",
+	"its own":                       "本设备设置",
+	"global":                        "全局",
+	"Latency %d ms":                 "延迟 %d ms",
+	"Tune":                          "单设备设置",
 }
