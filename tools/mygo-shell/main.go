@@ -24,6 +24,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/adapt"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/enginebin"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
@@ -47,7 +48,7 @@ func main() {
 	if *enginePath != "" {
 		app.enginePath = *enginePath
 	} else {
-		app.enginePath = defaultEnginePath()
+		app.enginePath = resolveEngine()
 	}
 
 	// A start-up report lets CI prove the shell builds, launches and can
@@ -378,34 +379,38 @@ func (a *App) SetPeers(p []engine.Peer) {
 
 // Probe is the start-up report CI reads.
 type Probe struct {
-	Shell       string `json:"shell"`
-	Runtime     string `json:"runtime"`
-	CPUs        int    `json:"cpus"`
-	GoMax       int    `json:"gomaxprocs"`
-	Surface     string `json:"surface"`
-	DefaultMode string `json:"default_mode"`
-	LatencyMs   int    `json:"latency_ms"`
-	EngineFound bool   `json:"engine_found"`
-	EnginePath  string `json:"engine_path"`
-	HasTray     bool   `json:"tray_api_available"`
-	Note        string `json:"note"`
+	Shell         string `json:"shell"`
+	Runtime       string `json:"runtime"`
+	CPUs          int    `json:"cpus"`
+	GoMax         int    `json:"gomaxprocs"`
+	Surface       string `json:"surface"`
+	DefaultMode   string `json:"default_mode"`
+	LatencyMs     int    `json:"latency_ms"`
+	EngineFound   bool   `json:"engine_found"`
+	EnginePath    string `json:"engine_path"`
+	EngineBundled bool   `json:"engine_bundled"`
+	EngineBytes   int    `json:"engine_bytes"`
+	HasTray       bool   `json:"tray_api_available"`
+	Note          string `json:"note"`
 }
 
 func (a *App) writeProbe(path string) {
 	cfg := a.settings.Current()
 	_, err := os.Stat(a.enginePath)
 	rep := Probe{
-		Shell:       "mygo (Go)",
-		Runtime:     runtime.Version(),
-		CPUs:        runtime.NumCPU(),
-		GoMax:       runtime.GOMAXPROCS(0),
-		Surface:     string(a.life.Surface()),
-		DefaultMode: string(cfg.Mode),
-		LatencyMs:   cfg.LatencyMs,
-		EngineFound: err == nil,
-		EnginePath:  a.enginePath,
-		HasTray:     true,
-		Note:        "window opens only on demand; the engine keeps its own process",
+		Shell:         "mygo (Go)",
+		Runtime:       runtime.Version(),
+		CPUs:          runtime.NumCPU(),
+		GoMax:         runtime.GOMAXPROCS(0),
+		Surface:       string(a.life.Surface()),
+		DefaultMode:   string(cfg.Mode),
+		LatencyMs:     cfg.LatencyMs,
+		EngineFound:   err == nil,
+		EnginePath:    a.enginePath,
+		EngineBundled: enginebin.Bundled(),
+		EngineBytes:   enginebin.Size(),
+		HasTray:       true,
+		Note:          "window opens only on demand; the engine keeps its own process",
 	}
 	b, _ := json.MarshalIndent(rep, "", "  ")
 	if err := os.WriteFile(path, b, 0o644); err != nil {
@@ -414,22 +419,36 @@ func (a *App) writeProbe(path string) {
 	fmt.Println(string(b))
 }
 
-// defaultEnginePath looks for the engine beside the shell.
-func defaultEnginePath() string {
+// resolveEngine finds the engine, in the order that respects what the user
+// meant: a file placed beside the shell first, so a developer can swap one in,
+// then the copy embedded in this build.
+func resolveEngine() string {
+	if beside := besideEnginePath(); beside != "" {
+		if _, err := os.Stat(beside); err == nil {
+			return beside
+		}
+	}
+	if enginebin.Bundled() {
+		path, err := enginebin.Ensure(enginebin.CacheDir())
+		if err != nil {
+			log.Printf("could not unpack the bundled engine: %v", err)
+			return ""
+		}
+		return path
+	}
+	// Nothing to run, but returning the expected path lets the start-up report
+	// say where an engine was looked for.
+	return besideEnginePath()
+}
+
+// besideEnginePath is where an engine would sit if one were placed next to the
+// shell, which is how the portable layout works.
+func besideEnginePath() string {
 	exe, err := os.Executable()
 	if err != nil {
 		return ""
 	}
-	dir := filepath.Dir(exe)
-	name := "airflash-engine"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	candidate := filepath.Join(dir, name)
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
-	}
-	return candidate
+	return filepath.Join(filepath.Dir(exe), enginebin.Name())
 }
 
 // trayIcon returns a small PNG, or nil when none is embedded. A missing icon

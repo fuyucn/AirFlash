@@ -27,6 +27,22 @@ works - PipeWire or PulseAudio monitor, behind the same trait the WASAPI path
 would implement. The AirPlay side of the engine (RTSP, HAP, PTP, RTP, ALAC) is
 platform-neutral already.
 
+## One file
+
+`AirFlash.exe` is a single file with the engine inside it. On first start the
+shell unpacks the engine to `%LOCALAPPDATA%\AirFlash\engine`, named after a
+digest of its own contents, and reuses it after that: an upgraded shell never
+reuses a stale engine.
+
+The engine is still a separate process. That is deliberate, not an oversight:
+a Go runtime cannot hold the engine's 7.98 ms send deadline while the UI shares
+it (measured: 73% of slots missed with the UI in-process, 0% when the audio path
+has its own). Embedding keeps the split without asking the user to manage two
+files.
+
+A build with no engine in `internal/enginebin/payload` still compiles and starts;
+it reports `engine_bundled: false` rather than failing.
+
 ## Surfaces
 
 Two ways to draw the window, chosen in Settings:

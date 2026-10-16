@@ -1,0 +1,5 @@
+# The engine is copied here by the build and embedded into the shell. It is a
+# build input, not source: committing a platform binary would bloat the repo
+# and go stale.
+airflash-engine
+airflash-engine.exe
