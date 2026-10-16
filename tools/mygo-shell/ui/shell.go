@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
@@ -19,7 +20,9 @@ type Deps struct {
 	Settings  *settings.Store
 	Life      *shell.Lifecycle
 	Peers     func() []engine.Peer
+	Receivers func() []discovery.Receiver
 	OnStart   func(engine.Peer)
+	OnPlay    func(discovery.Receiver)
 	OnStop    func()
 	OnGain    func(float64)
 	OnLatency func(int)
@@ -48,6 +51,20 @@ type Shell struct {
 // New builds the shell view.
 func New(d Deps) *Shell {
 	return &Shell{deps: d, entered: time.Now()}
+}
+
+// SetPage selects which page the window shows. It exists so a caller can open
+// the window on a particular page, and so a render check can look at one
+// without clicking through the sidebar.
+func (s *Shell) SetPage(name string) {
+	switch name {
+	case "receivers":
+		s.page = pageReceivers
+	case "settings":
+		s.page = pageSettings
+	default:
+		s.page = pageNow
+	}
 }
 
 // View builds one frame.
@@ -224,23 +241,28 @@ func (s *Shell) measurement(c *ui.Context, p palette, cfg settings.Settings, st 
 // trend draws the measured latency over time, with the target as a reference
 // line so a drift away from it is visible without reading numbers.
 func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+	// Before the first reading there is nothing to plot. A large empty frame
+	// would read as a hole in the layout, so the card is only as tall as what
+	// it has to say until there is a reading.
+	if !st.HasMeasured {
+		card := ui.Column(c).FillWidth().Padding(20).Gap(4).Radius(14).Background(p.Surface)
+		card.Children(func() {
+			ui.Text(c, "Latency over time").FontSize(13).TextColor(p.Ink)
+			ui.Text(c, "The measured latency appears here once playback starts, "+
+				"against the target you set.").FontSize(12).TextColor(p.InkMuted)
+		})
+		return
+	}
+
 	card := ui.Column(c).FillWidth().Padding(20).Gap(10).Radius(14).Background(p.Surface)
 	card.Children(func() {
-		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, "Latency over time").FontSize(13).TextColor(p.InkMuted)
-			if !st.HasMeasured {
-				ui.Text(c, "· no readings yet, start playback").FontSize(12).TextColor(p.InkMuted)
-			}
-		})
+		ui.Text(c, "Latency over time").FontSize(13).TextColor(p.InkMuted)
 
 		plot := ui.Box(c).FillWidth().Height(104).Radius(8).Background(p.SurfaceHi)
 		plot.Draw(func(pt *ui.Painter, r ui.Rect) {
 			hist := st.History
 			target := targetMs(cfg, st)
 
-			// The scale always includes the target, so the line never leaves
-			// the frame and the target's position stays comparable between
-			// frames.
 			lo, hi := target*0.8, target*1.2
 			for _, v := range hist {
 				if v < lo {
@@ -329,25 +351,52 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 }
 
 func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
-	peers := s.deps.Peers()
+	var found []discovery.Receiver
+	if s.deps.Receivers != nil {
+		found = s.deps.Receivers()
+	}
+
 	card := ui.Column(c).FillWidth().Padding(22).Gap(14).Radius(14).Background(p.Surface)
 	card.Children(func() {
-		if len(peers) == 0 {
-			ui.Text(c, "No receiver yet. Connect the PC and the HomePod to the same network.").
-				FontSize(13).TextColor(p.InkMuted)
+		if len(found) == 0 {
+			ui.Column(c).Gap(6).Children(func() {
+				ui.Text(c, "Looking for receivers…").FontSize(13).TextColor(p.Ink)
+				ui.Text(c, "The PC and the HomePod have to be on the same network.").
+					FontSize(12).TextColor(p.InkMuted)
+			})
 			return
 		}
-		for _, peer := range peers {
-			row := ui.Row(c).FillWidth().Padding(10).Radius(9).Gap(10)
+
+		for _, r := range found {
+			rec := r
+			row := ui.Row(c).FillWidth().Padding(12).Radius(9).Gap(12)
 			row.Background(p.SurfaceHi)
 			row.Children(func() {
 				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, peer.Host).FontSize(13).TextColor(p.Ink)
-					ui.Text(c, fmt.Sprintf("port %d", peer.Port)).FontSize(11).TextColor(p.InkMuted)
+					ui.Row(c).Gap(8).Children(func() {
+						ui.Text(c, rec.Name).FontSize(13).TextColor(p.Ink)
+						if rec.IsGroup() && !rec.Complete() {
+							ui.Text(c, "incomplete").FontSize(11).TextColor(p.Warning)
+						}
+					})
+					detail := rec.Address
+					if rec.Model != "" {
+						detail = rec.Model + " · " + rec.Address
+					}
+					if rec.IsGroup() {
+						detail = fmt.Sprintf("stereo · %d/2 · %s", len(rec.Members), detail)
+					}
+					ui.Text(c, detail).FontSize(11).TextColor(p.InkMuted)
 				})
+
 				ui.Spacer(c).Grow(1)
-				if ui.Button(c, "Play").Clicked() && s.deps.OnStart != nil {
-					s.deps.OnStart(peer)
+
+				// A pair with one half cannot be played to, so it offers no
+				// action rather than one that would sound wrong.
+				if rec.Complete() {
+					if ui.PrimaryButton(c, "Play").Clicked() && s.deps.OnPlay != nil {
+						s.deps.OnPlay(rec)
+					}
 				}
 			})
 		}

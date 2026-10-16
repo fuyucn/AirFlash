@@ -8,6 +8,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
@@ -67,7 +69,12 @@ type App struct {
 	client atomic.Pointer[engine.Client]
 	win    atomic.Pointer[mygo.Window]
 
-	peers atomic.Pointer[[]engine.Peer]
+	peers     atomic.Pointer[[]engine.Peer]
+	receivers atomic.Pointer[[]discovery.Receiver]
+
+	// discoveryCancel stops the mDNS browse. Discovery runs only while a window
+	// is open, so a closed window costs nothing on the network either.
+	discoveryCancel atomic.Pointer[context.CancelFunc]
 }
 
 func (a *App) run() {
@@ -77,6 +84,8 @@ func (a *App) run() {
 		if w := a.win.Swap(nil); w != nil {
 			w.Destroy()
 		}
+		// Discovery serves the window, so it stops with it.
+		a.stopDiscovery()
 	})
 
 	// With no window the app stays resident, so the engine keeps playing.
@@ -89,6 +98,7 @@ func (a *App) run() {
 	mygo.App.WhenReady(func() {
 		a.installTray()
 		a.openWindow(a.settings.Current())
+		a.startDiscovery()
 	})
 
 	if err := mygo.App.Run(); err != nil {
@@ -101,12 +111,14 @@ func (a *App) openWindow(cfg settings.Settings) {
 		return
 	}
 	view := appui.New(appui.Deps{
-		State:    a.state,
-		Settings: a.settings,
-		Life:     a.life,
-		Peers:    a.currentPeers,
-		OnStart:  a.startStream,
-		OnStop:   a.stopStream,
+		State:     a.state,
+		Settings:  a.settings,
+		Life:      a.life,
+		Peers:     a.currentPeers,
+		Receivers: a.Receivers,
+		OnPlay:    a.playReceiver,
+		OnStart:   a.startStream,
+		OnStop:    a.stopStream,
 		OnGain: func(g float64) {
 			a.settings.Update(func(s *settings.Settings) { s.Gain = g })
 			if c := a.client.Load(); c != nil {
@@ -170,8 +182,84 @@ func (a *App) installTray() {
 	tray.OnClick(func() { a.openWindow(a.settings.Current()) })
 }
 
+// startDiscovery browses for receivers while a window is open.
+func (a *App) startDiscovery() {
+	if a.discoveryCancel.Load() != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.discoveryCancel.Store(&cancel)
+
+	go func() {
+		err := discovery.Browse(ctx, func(found []discovery.Receiver) {
+			a.receivers.Store(&found)
+
+			// Keep the engine's peer list in step, so Play works from the
+			// window without another lookup.
+			var peers []engine.Peer
+			for _, r := range found {
+				if !r.Complete() {
+					continue
+				}
+				for _, m := range r.Peers() {
+					peers = append(peers, engine.Peer{Host: m.Address, Port: m.Port})
+				}
+			}
+			a.peers.Store(&peers)
+
+			if w := a.win.Load(); w != nil {
+				w.Invalidate()
+			}
+		}, func(err error) {
+			log.Printf("discovery: %v", err)
+		})
+		if err != nil && ctx.Err() == nil {
+			log.Printf("discovery stopped: %v", err)
+		}
+	}()
+}
+
+// stopDiscovery ends the browse and releases the cancel.
+func (a *App) stopDiscovery() {
+	if c := a.discoveryCancel.Swap(nil); c != nil {
+		(*c)()
+	}
+}
+
+// Receivers returns what discovery has found.
+func (a *App) Receivers() []discovery.Receiver {
+	if r := a.receivers.Load(); r != nil {
+		return *r
+	}
+	return nil
+}
+
+// playReceiver starts playback on what discovery found. A stereo pair sends
+// to both of its halves; a single device sends to itself.
+func (a *App) playReceiver(r discovery.Receiver) {
+	if !r.Complete() {
+		return
+	}
+	var peers []engine.Peer
+	for _, m := range r.Peers() {
+		peers = append(peers, engine.Peer{Host: m.Address, Port: m.Port})
+	}
+	if len(peers) == 0 {
+		return
+	}
+	a.startStreamTo(peers)
+}
+
 // startStream begins playback on a receiver, starting the engine if needed.
 func (a *App) startStream(peer engine.Peer) {
+	a.startStreamTo([]engine.Peer{peer})
+}
+
+// startStreamTo starts the engine if needed and begins playback to the peers.
+func (a *App) startStreamTo(peers []engine.Peer) {
+	if len(peers) == 0 {
+		return
+	}
 	c := a.client.Load()
 	if c == nil || !c.Running() {
 		if a.enginePath == "" {
@@ -194,10 +282,10 @@ func (a *App) startStream(peer engine.Peer) {
 	opts.Gain = cfg.Gain
 	opts.SampleRate = cfg.SampleRate
 
-	if _, err := c.StartStream([]engine.Peer{peer}, opts); err != nil {
+	if _, err := c.StartStream(peers, opts); err != nil {
 		log.Printf("start failed: %v", err)
 	}
-	a.settings.Update(func(s *settings.Settings) { s.LastPeer = peer.Host })
+	a.settings.Update(func(s *settings.Settings) { s.LastPeer = peers[0].Host })
 }
 
 func (a *App) stopStream() {
