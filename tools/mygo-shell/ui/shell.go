@@ -660,6 +660,14 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 		return
 	}
 
+	// The local capture side, which is a different thing from the network: the
+	// round trip and the losses say whether the stream reached the speaker, and
+	// these say whether the PC produced anything to send. A PC that captures
+	// nothing leaves every network number perfect.
+	if st.Capture.CaptureFrames > 0 || st.Capture.InputRate > 0 {
+		s.capture(c, p, st)
+	}
+
 	// A sender stall is the stutter itself: it fell behind and threw away
 	// audio. Packet loss is what makes the receiver ask for it again.
 	losses := st.RetransmitMissing + st.RetransmitExpired
@@ -690,6 +698,42 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 			ui.Text(c, "The receiver's feedback is late, which is what a rising ping looks like.").
 				FontSize(sizeBody).TextColor(p.Warning)
 		}
+	})
+}
+
+// capture is the PC's own side of the stream.
+//
+// The network numbers cannot show a PC that produces no sound: while it captures
+// nothing, the round trip stays perfect and the buffer stays full. These are the
+// counters that do show it, and the drop and underrun counts are the ones that
+// explain a gap the network had nothing to do with.
+func (s *Shell) capture(c *ui.Context, p palette, st engine.Metrics) {
+	cap := st.Capture
+	unhealthy := cap.DroppedFrames > 0 || cap.UnderrunPackets > 0 || st.SilentReports > 0
+
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
+		ui.Row(c).FillWidth().Children(func() {
+			sectionLabel(c, p, "CAPTURE")
+			ui.Spacer(c).Grow(1)
+			if unhealthy {
+				ui.Text(c, "the PC's own audio is faltering").FontSize(sizeBody).TextColor(p.Warning)
+			} else {
+				ui.Text(c, "sound is being captured").FontSize(sizeBody).TextColor(p.Success)
+			}
+		})
+
+		if cap.InputRate > 0 {
+			s.metricRow(c, p, "Input rate", fmt.Sprintf("%d Hz", cap.InputRate), p.Ink)
+		}
+		if p95 := cap.CaptureToSendP95Ms; p95 != nil {
+			s.metricRow(c, p, "Capture to send, slowest 5%",
+				fmt.Sprintf("%.1f ms", *p95), p.Ink)
+		}
+		if cap.MaxQueueAgeMs > 0 {
+			s.metricRow(c, p, "Queue age", fmt.Sprintf("%.1f ms", cap.MaxQueueAgeMs), p.Ink)
+		}
+		s.countRow(c, p, "Frames dropped", cap.DroppedFrames)
+		s.countRow(c, p, "Buffer underruns", cap.UnderrunPackets)
 	})
 }
 

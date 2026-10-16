@@ -2,7 +2,9 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // transportEvent is a report shaped exactly like the engine's, taken from its
@@ -331,5 +333,101 @@ func TestTheTwoChartsCoverTheSameSpan(t *testing.T) {
 		t.Errorf("latency has %d points and the timeline has %d slots: "+
 			"a spike and its gap would sit at different places",
 			len(m.History), len(m.Slots))
+	}
+}
+
+// captureReport is one capture_metrics event, the shape live.rs emits.
+func captureReport(qpc uint64) Event {
+	raw := fmt.Sprintf(`{"event":"capture_metrics","metrics":{
+		"dropped_frames":0,"underrun_packets":0,"capture_frames":4410,
+		"max_queue_age_ms":3.5,"capture_to_send_p95_ms":9.2,
+		"last_audio_qpc_ns":%d,"input_rate":44100}}`, qpc)
+	return Event{Event: "capture_metrics", Raw: json.RawMessage(raw)}
+}
+
+func TestSilenceIsReadFromTheCaptureStamp(t *testing.T) {
+	// The engine stamps each non-silent frame with its own performance counter,
+	// which is another process's clock: the shell cannot subtract it from
+	// anything of its own. What it can do is watch the stamp move. While audio
+	// flows it advances every report; while the PC is quiet it does not move at
+	// all, and that is the silence.
+	st := NewState()
+
+	// Three seconds of audio.
+	for i := 0; i < 3; i++ {
+		st.Apply(captureReport(uint64(i + 1)))
+	}
+	if got := st.Snapshot(); got.SilentFor != 0 {
+		t.Errorf("silent for %v after a fresh stamp, want the silence cleared", got.SilentFor)
+	}
+
+	// Then five reports carrying the same stamp. Each one says that the second
+	// it covers produced nothing new, so the age of the silence is the number of
+	// them.
+	for i := 0; i < 5; i++ {
+		st.Apply(captureReport(3))
+	}
+	m := st.Snapshot()
+	if !m.Silent {
+		t.Error("a capture stamp that has not moved is not reported as silence")
+	}
+	if m.SilentFor != 5*time.Second {
+		t.Errorf("silent for %v, want the five seconds the stamp stood still", m.SilentFor)
+	}
+	if !m.HasSilence {
+		t.Error("silence was measured but not reported as measured")
+	}
+}
+
+func TestSilenceClearsWhenAudioReturns(t *testing.T) {
+	st := NewState()
+	// The first report is the session opening on a quiet PC rather than a second
+	// of new silence, so four reports are three seconds of it.
+	for i := 0; i < 4; i++ {
+		st.Apply(captureReport(7)) // the PC goes quiet
+	}
+	if got := st.Snapshot().SilentFor; got != 3*time.Second {
+		t.Fatalf("silent for %v, want the three seconds the stamp stood still", got)
+	}
+	st.Apply(captureReport(9)) // sound again
+
+	if got := st.Snapshot().SilentFor; got != 0 {
+		t.Errorf("silent for %v after audio returned, want it cleared", got)
+	}
+	if got := st.Snapshot().Silent; got {
+		t.Error("still reported silent after audio came back")
+	}
+}
+
+func TestASilentPCCannotBeConfusedWithNoMeasurement(t *testing.T) {
+	// A machine that has never produced sound reports zero, and zero means "not
+	// measured" rather than "quiet": the two need different words.
+	st := NewState()
+	st.Apply(captureReport(0))
+
+	m := st.Snapshot()
+	if m.Silent {
+		t.Error("no stamp at all was reported as silence")
+	}
+	if m.HasSilence {
+		t.Error("no stamp at all was reported as a measurement of silence")
+	}
+}
+
+func TestCaptureCountersAreRead(t *testing.T) {
+	// These are the local capture side's own numbers, and the only place the
+	// shell sees the PC dropping frames rather than the network losing packets.
+	st := NewState()
+	st.Apply(captureReport(100))
+
+	m := st.Snapshot()
+	if m.Capture.CaptureFrames != 4410 {
+		t.Errorf("capture frames = %d, want the engine's own count", m.Capture.CaptureFrames)
+	}
+	if m.Capture.InputRate != 44100 {
+		t.Errorf("input rate = %d, want 44100", m.Capture.InputRate)
+	}
+	if m.Capture.CaptureToSendP95Ms == nil || *m.Capture.CaptureToSendP95Ms != 9.2 {
+		t.Errorf("p95 = %v, want 9.2", m.Capture.CaptureToSendP95Ms)
 	}
 }

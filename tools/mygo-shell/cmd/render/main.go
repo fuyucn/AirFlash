@@ -102,7 +102,14 @@ func main() {
 		})
 		for _, page := range []string{"stats", "receivers", "settings"} {
 			view.SetPage(page)
-			write(filepath.Join(out, "window-"+state.name+"-"+page+".png"), view.View, 880, 640, 2)
+			// A tall window, so the whole page is in the shot rather than only
+			// what fits in a 640 DIP viewport: the diagnostics and capture
+			// sections sit below the fold.
+			height := 640
+			if page == "stats" {
+				height = 1180
+			}
+			write(filepath.Join(out, "window-"+state.name+"-"+page+".png"), view.View, 880, height, 2)
 		}
 	}
 }
@@ -146,6 +153,16 @@ func streaming() *engine.State {
 		    "health":{"feedback_rtt_ms":%.1f,"feedback_delayed":false}}]}`,
 			i*1000, recoveries, skipped, i*125, i/10, i/10, expired, buffer, rtt)
 		st.Apply(engine.Event{Event: "transport_metrics", Raw: []byte(body)})
+	}
+
+	// The PC then stops making sound: the capture stamp stands still, and the
+	// network numbers above stay perfect throughout.
+	for i := 0; i < 12; i++ {
+		st.Apply(engine.Event{Event: "capture_metrics", Raw: []byte(
+			`{"event":"capture_metrics","metrics":{"dropped_frames":0,
+			 "underrun_packets":0,"capture_frames":4410,"max_queue_age_ms":3.5,
+			 "capture_to_send_p95_ms":9.2,"last_audio_qpc_ns":999999,
+			 "input_rate":44100}}`)})
 	}
 	return st
 }

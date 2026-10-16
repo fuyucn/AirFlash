@@ -88,6 +88,24 @@ type Metrics struct {
 	ReconnectAttempt int
 	ReconnectMax     int
 
+	// Capture is what the local capture side is doing. It comes from the
+	// engine's capture_metrics, one report a second, and it is the only place
+	// the shell can see whether the PC is actually producing audio: the network
+	// side stays perfect while nothing is being captured.
+	Capture Capture
+
+	// Silent is true while the PC has sent no audio for longer than the standby
+	// threshold. The engine reports when it last captured a frame, and the gap
+	// between that and now is what this is.
+	Silent    bool
+	SilentFor time.Duration
+	// HasSilence says whether Silent has been measured at all, so an unmeasured
+	// gap is not reported as silence.
+	HasSilence bool
+	// SilentReports is how many consecutive reports carried no new audio, which
+	// at one report a second is how many seconds the PC has been quiet.
+	SilentReports int
+
 	// SessionPeakRTTMs and rttSamples describe the round trip over the whole
 	// session. The peak is what a gap has to fit inside; the spread says
 	// whether the link is slow or erratic.
@@ -173,6 +191,13 @@ func (s *State) ResetSession() {
 	s.lastSkipped = 0
 	s.lastRecoveries = 0
 	s.lastExpired = 0
+	s.lastAudioQPC = 0
+	s.silentReports = 0
+	s.metrics.Capture = Capture{}
+	s.metrics.Silent = false
+	s.metrics.SilentFor = 0
+	s.metrics.HasSilence = false
+	s.metrics.SilentReports = 0
 }
 
 // State is the shared, mutex-guarded app model.
@@ -189,6 +214,12 @@ type State struct {
 	lastSkipped    uint64
 	lastRecoveries uint64
 	lastExpired    uint64
+
+	// lastAudioQPC is the capture stamp the engine last reported. It only moves
+	// while the PC produces sound, so watching it is how silence is seen without
+	// sharing the engine's clock.
+	lastAudioQPC  uint64
+	silentReports int
 }
 
 // diff is how much a cumulative counter moved since it was last read. The
@@ -293,6 +324,46 @@ func (s *State) Apply(ev Event) {
 		s.metrics.Phase = PhaseNegotiating
 	case "negotiated", "handshake_complete":
 		s.metrics.Phase = PhaseNegotiating
+	case "capture_metrics":
+		// The local capture side, once a second. Two things are read from it:
+		// the counters, which the Stats page shows, and whether the PC is
+		// actually producing audio.
+		//
+		// The engine stamps each non-silent frame with its own performance
+		// counter, and that counter belongs to another process's clock, so the
+		// shell cannot subtract it from anything of its own. What it can do is
+		// watch the stamp: while audio is flowing it moves every report, and
+		// while the PC is silent it does not move at all.
+		var capture struct {
+			Metrics Capture `json:"metrics"`
+		}
+		if json.Unmarshal(ev.Raw, &capture) != nil {
+			break
+		}
+		s.metrics.Capture = capture.Metrics
+
+		// The very first stamp is not "the stamp moved" - it is the first thing
+		// the engine has said at all, and a session that opened on a silent PC
+		// must count that second rather than reset the count to zero.
+		first := s.lastAudioQPC == 0
+		moved := !first && capture.Metrics.LastAudioQPCNs != s.lastAudioQPC
+		s.lastAudioQPC = capture.Metrics.LastAudioQPCNs
+
+		switch {
+		case moved || first:
+			// Audio arrived - or the session has just opened on it - so whatever
+			// silence was being counted is over.
+			s.silentReports = 0
+		case capture.Metrics.LastAudioQPCNs != 0:
+			// The stamp stood still, which is what a quiet PC looks like.
+			s.silentReports++
+		}
+		s.metrics.SilentReports = s.silentReports
+		// One report is one second, so the count is the age of the silence.
+		s.metrics.SilentFor = time.Duration(s.silentReports) * time.Second
+		s.metrics.HasSilence = capture.Metrics.LastAudioQPCNs != 0
+		s.metrics.Silent = s.silentReports > 0
+
 	case "transport_metrics":
 		var tm TransportMetrics
 		if json.Unmarshal(ev.Raw, &tm) != nil {
@@ -477,6 +548,18 @@ type MemberMetrics struct {
 	Host   string       `json:"host"`
 	Media  MediaMetrics `json:"media"`
 	Health Health       `json:"health"`
+}
+
+// Capture is the local capture side's picture, as the engine reports it once a
+// second.
+type Capture struct {
+	DroppedFrames      uint64   `json:"dropped_frames"`
+	UnderrunPackets    uint64   `json:"underrun_packets"`
+	CaptureFrames      uint64   `json:"capture_frames"`
+	MaxQueueAgeMs      float64  `json:"max_queue_age_ms"`
+	CaptureToSendP95Ms *float64 `json:"capture_to_send_p95_ms"`
+	LastAudioQPCNs     uint64   `json:"last_audio_qpc_ns"`
+	InputRate          uint32   `json:"input_rate"`
 }
 
 // TransportMetrics is one report from the engine.

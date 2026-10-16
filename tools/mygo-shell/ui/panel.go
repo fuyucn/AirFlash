@@ -204,12 +204,36 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 			}
 		})
 
-		// Volume belongs to the receiver that is playing. The engine's
-		// device-volume command addresses the session, and a session is one
-		// receiver, so a slider anywhere else would do nothing.
 		if playing {
+			// Volume belongs to the receiver that is playing. The engine's
+			// device-volume command addresses the session, and a session is one
+			// receiver, so a slider anywhere else would do nothing.
 			p.volumeRow(c, pal, rec)
+			p.silenceRow(c, pal, p.deps.State.Snapshot())
 		}
+	})
+}
+
+// silenceRow says that the PC is sending no sound at all.
+//
+// This is the one failure the network numbers cannot show: while the PC captures
+// nothing, the round trip stays perfect, the buffer stays full, and the reading
+// on the panel is exactly what it would be for healthy audio. The user hears
+// nothing and every number says things are fine, so the silence has to be stated
+// on its own.
+func (p *Panel) silenceRow(c *ui.Context, pal palette, st engine.Metrics) {
+	// A session that has just opened has not measured anything yet, and a PC
+	// that never makes a sound reports no stamp at all; neither is silence.
+	if !st.HasSilence || st.SilentReports == 0 {
+		return
+	}
+	seconds := int(st.SilentFor.Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	ui.Row(c).FillWidth().Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, fmt.Sprintf("no sound from the PC for %d s", seconds)).
+			FontSize(sizeSmall).TextColor(pal.Warning)
 	})
 }
 

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -288,5 +289,49 @@ func TestAReconnectSaysWhichAttemptItIsOn(t *testing.T) {
 	st2.SetReconnecting(2, 5)
 	if got := phaseNote(st2.Snapshot()); got != "reconnecting 2/5" {
 		t.Errorf("note = %q, want the attempt named: it is what says the app is still on it", got)
+	}
+}
+
+func TestASilentPCIsSaidOutLoud(t *testing.T) {
+	// While the PC captures nothing, the round trip stays perfect and the buffer
+	// stays full, so every number on the panel says things are fine. The user
+	// hears nothing, so the silence has to be stated on its own.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+
+	st := streamingState()
+	// Four seconds of nothing captured. The first report is the session opening
+	// on a quiet PC rather than a second of new silence, so four reports are
+	// three seconds of it - the same counting the engine does.
+	for i := 0; i < 4; i++ {
+		st.Apply(engine.Event{Event: "capture_metrics", Raw: []byte(
+			`{"event":"capture_metrics","metrics":{"capture_frames":4410,
+			 "last_audio_qpc_ns":5,"input_rate":44100}}`)})
+	}
+
+	panel := NewPanel(panelDeps(st, []discovery.Receiver{living}, living.ID))
+	tester := ui.NewTester(panel.View, panelWidth, 600)
+
+	found := ""
+	for _, s := range tester.Texts() {
+		if strings.Contains(s, "no sound") {
+			found = s
+		}
+	}
+	if found == "" {
+		t.Fatal("a PC sending no sound is not reported, so every number says all is well")
+	}
+	if !strings.Contains(found, "3 s") {
+		t.Errorf("message = %q, want it to say how long the silence has lasted", found)
+	}
+}
+
+func TestAQuietPCBeforeAnythingIsMeasuredIsNot(t *testing.T) {
+	// A session that has just opened has measured nothing. Calling that silence
+	// would cry wolf on every fresh connection.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+	panel := NewPanel(panelDeps(streamingState(), []discovery.Receiver{living}, living.ID))
+
+	if ui.NewTester(panel.View, panelWidth, 600).HasText("no sound") {
+		t.Error("a fresh session is reported as silent before anything was measured")
 	}
 }
