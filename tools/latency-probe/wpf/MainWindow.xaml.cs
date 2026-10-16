@@ -69,7 +69,7 @@ public partial class MainWindow : Window
     private volatile bool stopRequested;
     private volatile bool running;
 
-    private double p50, p99, max, overPct;
+    private double p50, p95, p99, max, overPct;
     private int done, total;
     private string status = "idle";
     private int stalls;
@@ -111,7 +111,7 @@ public partial class MainWindow : Window
                 cpus = Environment.ProcessorCount,
                 working_set_bytes = ws,
                 private_bytes = priv,
-                p50_ms = p50, p95_ms = p50, p99_ms = p99, max_ms = max,
+                p50_ms = p50, p95_ms = p95, p99_ms = p99, max_ms = max,
                 over_one_slot_pct = overPct, stalls_over_20ms = stalls,
                 note = $"in-process with live UI, {done} slots, burn={burn}",
             };
@@ -207,14 +207,15 @@ public partial class MainWindow : Window
             done = doneCount;
             total = totalCount;
             p50 = At(0.50);
+            p95 = At(0.95);
             p99 = At(0.99);
             max = At(1);
             overPct = pct;
             status = $"{phase} · {done}/{total} slots · {stalls} stalls > 20 ms";
 
             StatsText.Text = string.Format(CultureInfo.InvariantCulture,
-                "p50 {0:F3} ms   p99 {1:F3} ms   max {2:F3} ms   late {3:F1}%",
-                p50, p99, max, overPct);
+                "p50 {0:F3} ms   p95 {1:F3} ms   p99 {2:F3} ms   max {3:F3} ms   late {4:F1}%",
+                p50, p95, p99, max, overPct);
             StatusText.Text = status;
 
             lock (gate)
