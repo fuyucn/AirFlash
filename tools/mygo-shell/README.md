@@ -43,19 +43,25 @@ files.
 A build with no engine in `internal/enginebin/payload` still compiles and starts;
 it reports `engine_bundled: false` rather than failing.
 
-## Surfaces
+## The panel is the app
 
-Two ways to draw the window, chosen in Settings:
+A tray click opens a narrow panel beside the icon: the receivers, one control
+each, and the current reading. That is what the app is almost every time it is
+opened, and it matches the upstream WPF app's own `ControlPanel.xaml` - 440 DIP
+wide, sized to its content, no taskbar button.
 
-| | Native UI | Webview |
-| --- | --- | --- |
-| Resident memory | ~53 MB | ~314 MB (main process ~31 MB plus a browser process tree) |
-| Ships as | one 9.4 MB file | one 9.4 MB file |
-| Depends on | nothing extra | WebView2 |
+The window is for the two things the panel is too small for: the full reading on
+Stats, and the settings. Nothing opens a window at launch.
 
-Native UI is the default recommendation. WebView2 ships with Windows 11 and is
-present on the vast majority of Windows 10 machines, but its cost is a process
-tree rather than a library, and on Linux it means WebKitGTK.
+The panel is a flyout, which means it is destroyed when it closes rather than
+hidden, so it holds nothing while the user is not looking at it.
+
+### The look
+
+Grayscale, square, and divided by dashed hairlines. The app exists to measure
+something, so it is drawn like the panel of a measuring device. Colour is a
+signal - a latency over target, a second that lost audio - and never
+decoration. `Theme.Radius` is 0: nothing in the interface is rounded.
 
 ## Latency: Auto
 
@@ -80,17 +86,23 @@ The first page is Stats. It shows:
   large, with the total that the observed parts add up to
 - a chart of the latency over time, with the target as a visible reference line
   and readings that went over it marked
+- a timeline of the session second by second, marking the seconds that lost
+  audio. The engine reports once a second, so one mark is one second, and a gap
+  lines up with the latency spike that caused it
 - the counters that explain a stutter: how often the sender fell behind, how
   many audio slots it discarded, and how many resends arrived too late
 
 `docs/STUTTER-ANALYSIS.md` reads the engine's send path and explains why a
 rising ping causes gaps, with the constants and the code that does it.
 
+The counters come from the engine as running totals for the session, so each
+report replaces the last rather than adding to it. They add up only across the
+two halves of a stereo pair, where each half counts its own.
+
 ## Lightweight mode
 
 Settings has one switch that changes what the app costs to run:
 
-- no window material and no glass, so the bars are a plain tone step
 - no entrance animation
 - the trend chart is dropped
 - metrics are sampled once a second instead of four times
@@ -106,13 +118,25 @@ continues, because the engine is not the window.
 
 ## Layout
 
-    main.go                 the app: tray, lifecycle, engine wiring
+    main.go                 the app: tray, panel, window, engine wiring
     ui/                     the window, drawn by mygo
-      theme.go              palette and the target-versus-measured band
-      shell.go              the views
+      theme.go              palette, type steps, and the dashed rule
+      panel.go              the tray panel: receivers, one control each
+      shell.go              the window: Stats, Receivers, Settings
     internal/engine/        the JSONL v1 client and the app's state
     internal/settings/      preferences, including the mode
     internal/shell/         window lifecycle: open, close, stay resident
+    cmd/render/             draws the surfaces to PNG files, for looking at
+    docs/DESIGN.md          what the design is and why, honestly
+
+## Looking at it without a HomePod
+
+    go run ./cmd/render /tmp/shots
+
+Writes the panel and all three window pages to PNG files, with a synthetic
+session. Looking at the running surface is the only way to judge a layout, and
+this is the cheapest way to get a picture - it found four bugs that the code did
+not show.
 
 ## Running
 

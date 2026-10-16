@@ -71,14 +71,21 @@ type App struct {
 	client atomic.Pointer[engine.Client]
 	win    atomic.Pointer[mygo.Window]
 	tray   *mygo.Tray
-	panel  *appui.Panel
-	flyout *mygo.Window
+	// flyout is the open panel, or nil. It is atomic because the engine
+	// goroutine repaints whatever is open, while the tray callback opens and
+	// closes it on the main thread.
+	flyout atomic.Pointer[mygo.Window]
 
 	peers     atomic.Pointer[[]engine.Peer]
 	receivers atomic.Pointer[[]discovery.Receiver]
 	// playing is the receiver playback is going to, or "". The engine streams
 	// to hosts, so the receiver those hosts belong to is the shell's own fact.
 	playing atomic.Pointer[string]
+
+	// lastPaint is when the open surfaces were last asked to redraw. The
+	// engine reports more often than a person can read, so redraws are held to
+	// the rate the mode asks for.
+	lastPaint atomic.Int64
 
 	// discoveryCancel stops the mDNS browse. Discovery runs only while a window
 	// is open, so a closed window costs nothing on the network either.
@@ -112,6 +119,49 @@ func (a *App) run() {
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// onEngineEvent folds one engine event into the model and repaints whatever is
+// open.
+//
+// Without the repaint the surfaces would show the state as it was when they
+// opened: nothing else redraws them, because the only other thing that arrives
+// asynchronously is discovery, and that only runs while a window is open. A
+// reading that never moves is worse than no reading at all.
+func (a *App) onEngineEvent(ev engine.Event) {
+	a.state.Apply(ev)
+
+	// The engine reports several times a second; the redraw rate is what the
+	// mode chose, so a burst of events costs one frame rather than one each.
+	now := time.Now().UnixMilli()
+	if !a.dueToPaint(now) {
+		return
+	}
+
+	if w := a.win.Load(); w != nil {
+		w.Invalidate()
+	}
+	if f := a.flyout.Load(); f != nil {
+		f.Invalidate()
+	}
+}
+
+// dueToPaint reports whether enough time has passed for another redraw, and
+// records this one if so.
+//
+// The engine reports four times a second in standard mode and once in
+// lightweight; the redraw rate is what the mode asks for. Without this every
+// report would paint, and in lightweight mode - whose whole point is to stop
+// the shell spending cycles on itself - the UI would redraw four times as often
+// as the setting says.
+func (a *App) dueToPaint(nowMs int64) bool {
+	interval := int64(a.settings.Current().RedrawIntervalMs())
+	last := a.lastPaint.Load()
+	if last != 0 && nowMs-last < interval {
+		return false
+	}
+	a.lastPaint.Store(nowMs)
+	return true
 }
 
 func (a *App) openWindow(page string) {
@@ -266,9 +316,9 @@ func (a *App) recordSession() {
 // not a window. It is destroyed rather than hidden when it closes, so it holds
 // nothing while the user is not looking at it.
 func (a *App) togglePanel() {
-	if w := a.flyout; w != nil {
+	if w := a.flyout.Load(); w != nil {
 		w.Close()
-		a.flyout = nil
+		a.flyout.Store(nil)
 		return
 	}
 	if a.tray == nil {
@@ -290,8 +340,8 @@ func (a *App) togglePanel() {
 	})
 	// The panel is destroyed when it closes, so it holds nothing while the user
 	// is not looking at it.
-	w.OnClosed(func() { a.flyout = nil })
-	a.flyout = w
+	w.OnClosed(func() { a.flyout.Store(nil) })
+	a.flyout.Store(w)
 }
 
 // panelView builds the panel with the app's callbacks.
@@ -420,7 +470,7 @@ func (a *App) startStreamTo(peers []engine.Peer) {
 			log.Printf("no engine path configured")
 			return
 		}
-		started, err := engine.Start(a.enginePath, a.state.Apply)
+		started, err := engine.Start(a.enginePath, a.onEngineEvent)
 		if err != nil {
 			log.Printf("engine start failed: %v", err)
 			return
