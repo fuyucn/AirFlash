@@ -168,11 +168,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag='shell-v0.1.0'
+          # A tag that names the build, rather than one fixed tag every release
+          # overwrites. Overwriting leaves the release's published_at at the
+          # time that tag was first created, so the newest files sat on a
+          # release the list page still showed as hours old, and nothing said
+          # which build a file came from.
+          tag="shell-v0.1.0-${{ github.run_number }}"
+          {
+            echo 'The AirFlash shell in Go, for Windows and Linux.'
+            echo 'macOS is out of scope: macOS plays to a HomePod through AirPlay itself.'
+            echo
+            echo "Build ${{ github.run_number }}, from commit ${{ github.sha }}."
+          } > artifacts/notes.md
           if ! gh release view "$tag" --repo ${{ github.repository }} >/dev/null 2>&1; then
             gh release create "$tag" --repo ${{ github.repository }} \
-              --title 'mygo shell 0.1.0' \
-              --notes 'The AirFlash shell in Go, for Windows and Linux. macOS is out of scope: macOS plays to a HomePod through AirPlay itself.'
+              --title "mygo shell 0.1.0 (build ${{ github.run_number }})" \
+              --notes-file artifacts/notes.md \
+              --target '${{ github.sha }}'
           fi
           # Only the two platform builds and the reports: the engine lives
           # inside the Windows executable, not beside it.
