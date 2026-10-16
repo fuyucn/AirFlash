@@ -1,6 +1,13 @@
 package ui
 
-import "testing"
+import (
+	"image"
+	"image/color"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+)
 
 func TestBucketsKeepsASpike(t *testing.T) {
 	// Averaging would erase the one reading that matters, so a bucket keeps its
@@ -60,4 +67,85 @@ func TestPlotRangeLeavesRoomAroundAFlatSeries(t *testing.T) {
 	if hi-lo < 20 {
 		t.Errorf("range %v..%v is too tight to read", lo, hi)
 	}
+}
+
+func TestGapSummaryCountsTheSecondsThatLostAudio(t *testing.T) {
+	slots := []engine.Slot{{}, {Skipped: 3}, {}, {Recoveries: 1}, {}}
+	if got := gapSummary(slots); got != "2 of 5 s lost audio" {
+		t.Errorf("summary = %q, want the two gapped seconds named", got)
+	}
+}
+
+func TestGapSummarySaysSoWhenNothingWasLost(t *testing.T) {
+	// The good case has to be stated, not left blank: an empty chart is
+	// indistinguishable from a chart that is not working.
+	slots := make([]engine.Slot, 12)
+	if got := gapSummary(slots); got != "none in the last 12 s" {
+		t.Errorf("summary = %q, want it to say the session was clean", got)
+	}
+}
+
+func TestGapSummaryIsNotGreenBeforeAnythingIsMeasured(t *testing.T) {
+	// Green is a claim. Before the first report there is nothing to claim.
+	if got := gapSummaryColor(forDark(false), nil); got == forDark(false).Success {
+		t.Error("an unmeasured session is reported as clean")
+	}
+}
+
+func TestTheGapRibbonDrawsSomethingForEverySecond(t *testing.T) {
+	// The ribbon is one column per second. If it dropped columns, the marks
+	// would no longer line up with the latency chart above them, which is the
+	// only thing that makes them useful.
+	slots := make([]engine.Slot, 40)
+	slots[10].Skipped = 4
+
+	img := renderRibbon(slots, 400, 34)
+	// Find the columns holding the warning colour and check there is one, at
+	// roughly the tenth of the width from the left.
+	warn := forDark(false).Warning
+	first, last := -1, -1
+	for x := 0; x < 400; x++ {
+		if matches(img.At(x, 17), warn) {
+			if first < 0 {
+				first = x
+			}
+			last = x
+		}
+	}
+	if first < 0 {
+		t.Fatal("the gapped second was not drawn")
+	}
+	// Newest is at the right, so second 10 of 40 sits 29 seconds back. At 10 px
+	// a second that is near x=100, which is also what makes the marks line up
+	// with the latency chart drawn the same way.
+	if first < 90 || first > 110 {
+		t.Errorf("the mark is at x=%d..%d, want it near x=100 where the tenth second sits", first, last)
+	}
+}
+
+// renderRibbon draws the ribbon alone, so its pixels can be inspected.
+func renderRibbon(slots []engine.Slot, w, h int) *image.RGBA {
+	return ui.Render(func(c *ui.Context) {
+		p := forDark(false)
+		ui.Box(c).Width(float32(w)).Height(float32(h)).Draw(func(pt *ui.Painter, r ui.Rect) {
+			drawGapRibbon(pt, r, p, slots)
+		})
+	}, w, h, 1)
+}
+
+// matches reports whether a rendered pixel is the given colour. The renderer
+// works in premultiplied alpha, so the comparison is on the channels that
+// survive that, at the tolerance a colour round trip leaves.
+func matches(c color.Color, want ui.Color) bool {
+	r, g, b, _ := c.RGBA()
+	return absDiff(uint8(r>>8), want.R) <= 2 &&
+		absDiff(uint8(g>>8), want.G) <= 2 &&
+		absDiff(uint8(b>>8), want.B) <= 2
+}
+
+func absDiff(a, b uint8) int {
+	if a > b {
+		return int(a - b)
+	}
+	return int(b - a)
 }

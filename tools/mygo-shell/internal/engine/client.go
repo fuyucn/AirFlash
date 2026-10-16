@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"sync"
@@ -206,6 +207,25 @@ func (c *Client) Stop() (string, error) { return c.Send(CmdStop, nil) }
 // SetGain changes the stream gain.
 func (c *Client) SetGain(gain float64) (string, error) {
 	return c.Send(CmdSetGain, map[string]any{"gain": gain})
+}
+
+// SetDeviceVolume sets the receiver's own volume, 0 to 1.
+//
+// The engine takes a percentage and a strictly increasing sequence, which it
+// uses to discard a command that a later one has already replaced: dragging a
+// slider produces many of these, and only the last one matters.
+func (c *Client) SetDeviceVolume(volume float64) (string, error) {
+	percent := int(math.Round(volume * 100))
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	return c.Send(CmdSetDeviceVolume, map[string]any{
+		"volume":   percent,
+		"sequence": c.seq.Add(1),
+	})
 }
 
 // Pair starts pairing with a peer, which may answer with pin_required.

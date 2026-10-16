@@ -1,14 +1,19 @@
 // Package ui draws the AirFlash shell.
 //
-// The arrangement follows the platform: a sidebar and a toolbar the content
-// scrolls under, and content on flat surfaces. Glass is the material the system
-// draws, used only where the platform uses it - the bars and a few floating
-// controls - never as decoration on content.
+// The look is an instrument's: this app exists to measure something, so it is
+// drawn like the panel of a measuring device. Three rules carry it.
 //
-// The palette is the one the design direction dealt for this brief, "frost and
-// slate": cool white and one paler blue-grey step holding everything, type in
-// dark slate rather than black, and a single teal accent that appears on the
-// action and the live reading only.
+// Grayscale. Everything is black, white or a step of grey between them. The
+// only chroma in the interface is a signal - a latency that has gone over
+// target, a link that is failing - so colour always means something is wrong
+// or something is fine, and never decorates.
+//
+// Square. Nothing is rounded, not a row, not a button, not a field. Corners
+// are right angles and blocks are rectangles that meet.
+//
+// Dashed. Sections are divided by a dashed hairline rather than by a card or a
+// gap. A dash is the cheapest divider there is, and it reads as a rule drawn on
+// a chart rather than as a box drawn around a dashboard.
 package ui
 
 import (
@@ -17,9 +22,10 @@ import (
 
 // palette is one appearance.
 //
-// Two values do the visible work: a ground and an ink. One accent carries the
-// action. The rest are steps between them, so surfaces separate by tone rather
-// than by lines.
+// Ground and Ink carry the page; the surface steps separate blocks by tone.
+// Accent is not a colour but the darkest ink, because the action in a
+// grayscale interface is a black block. The three signal colours are the only
+// chroma in the app.
 type palette struct {
 	Ground     ui.Color
 	Surface    ui.Color
@@ -48,34 +54,34 @@ const (
 // light is the daylight appearance.
 func light() palette {
 	return palette{
-		Ground:     ui.Hex("#F7F9FA"),
-		Surface:    ui.Hex("#FFFFFF"),
-		SurfaceHi:  ui.Hex("#ECF0F2"),
-		Ink:        ui.Hex("#1F3038"),
-		InkMuted:   ui.Hex("#5D6B72"),
-		Accent:     ui.Hex("#0D7480"),
+		Ground:     ui.Hex("#FFFFFF"),
+		Surface:    ui.Hex("#F5F5F6"),
+		SurfaceHi:  ui.Hex("#EAEAEC"),
+		Ink:        ui.Hex("#101013"),
+		InkMuted:   ui.Hex("#6C6C75"),
+		Accent:     ui.Hex("#101013"),
 		AccentText: ui.Hex("#FFFFFF"),
-		Warning:    ui.Hex("#8A5A00"),
-		Danger:     ui.Hex("#A32020"),
-		Success:    ui.Hex("#1D6B45"),
-		Hairline:   ui.Hex("#D6DEE2"),
+		Warning:    ui.Hex("#9A6400"),
+		Danger:     ui.Hex("#B3261E"),
+		Success:    ui.Hex("#1B6B3A"),
+		Hairline:   ui.Hex("#D3D3D8"),
 	}
 }
 
 // dark is the night appearance, the same relationships on a dark ground.
 func dark() palette {
 	return palette{
-		Ground:     ui.Hex("#14191C"),
-		Surface:    ui.Hex("#1E2529"),
-		SurfaceHi:  ui.Hex("#2A3338"),
-		Ink:        ui.Hex("#E8EEF1"),
-		InkMuted:   ui.Hex("#9AA8AE"),
-		Accent:     ui.Hex("#4FB3BE"),
-		AccentText: ui.Hex("#0B1113"),
-		Warning:    ui.Hex("#E0A94A"),
-		Danger:     ui.Hex("#E8756B"),
-		Success:    ui.Hex("#63C08D"),
-		Hairline:   ui.Hex("#33403F"),
+		Ground:     ui.Hex("#0C0C0E"),
+		Surface:    ui.Hex("#16161A"),
+		SurfaceHi:  ui.Hex("#212126"),
+		Ink:        ui.Hex("#F2F2F4"),
+		InkMuted:   ui.Hex("#95959E"),
+		Accent:     ui.Hex("#F2F2F4"),
+		AccentText: ui.Hex("#0C0C0E"),
+		Warning:    ui.Hex("#D9A13C"),
+		Danger:     ui.Hex("#E4766C"),
+		Success:    ui.Hex("#5FBE85"),
+		Hairline:   ui.Hex("#2E2E34"),
 	}
 }
 
@@ -112,8 +118,24 @@ func themeFor(p palette, isDark bool) *ui.Theme {
 		Selection:      p.Accent,
 		Focus:          p.Accent,
 		Scrollbar:      p.Hairline,
-		Radius:         8,
+		// Square: nothing in this interface is rounded.
+		Radius: 0,
 	}
+}
+
+// rule divides two sections. It is a dashed hairline across the bottom of
+// whatever it is applied to, which is how this interface separates blocks:
+// a rule drawn on a chart, not a box drawn around a dashboard.
+func rule(e ui.Element) ui.Element {
+	return e.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed)
+}
+
+// sectionLabel is the small uppercase label a section opens with. The letters
+// are spread because the label is a heading for a block of measurements, not
+// running text, and the spacing is what keeps it from reading as one.
+func sectionLabel(c *ui.Context, p palette, s string) {
+	ui.Text(c, s).FontSize(sizeSmall).TextColor(p.InkMuted).
+		LetterSpacing(0.9).Bold()
 }
 
 // latencyBand describes a measured latency in words and a colour. It never

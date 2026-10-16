@@ -70,12 +70,48 @@ type Metrics struct {
 	// History feeds the trend chart, newest last.
 	History []float64
 
+	// Slots is one entry per engine report, which the engine sends once a
+	// second, so it is a second-by-second record of the session. It is what
+	// says where a gap happened rather than only that one did: a latency chart
+	// shows the network, and this shows the audio.
+	Slots []Slot
+
 	// SessionPeakRTTMs and rttSamples describe the round trip over the whole
 	// session. The peak is what a gap has to fit inside; the spread says
 	// whether the link is slow or erratic.
 	SessionPeakRTTMs float64
 	rttSamples       []float64
 }
+
+// Slot is one second of a session.
+//
+// The counters the engine reports are cumulative, so each slot holds what
+// changed since the one before it rather than the total. A slot with nothing
+// lost is the common case and stays quiet.
+type Slot struct {
+	// Skipped is the audio the sender threw away in this second: it fell
+	// behind and the slots it had missed were already past their play time.
+	Skipped uint64
+	// Recoveries is how many times the sender caught up from a stall.
+	Recoveries uint64
+	// Expired is the audio the receiver asked for too late to be sent again.
+	Expired uint64
+	// LatencyMs is what the delay was during this second, or 0 if the engine
+	// had not measured it yet.
+	LatencyMs float64
+}
+
+// Gapped reports whether this second had an audible gap in it.
+func (s Slot) Gapped() bool { return s.Skipped > 0 || s.Recoveries > 0 || s.Expired > 0 }
+
+// WindowSeconds is how much of a session the shell keeps and draws.
+//
+// The engine reports once a second, so this is both the number of latency
+// points and the number of timeline slots. The two charts sit one above the
+// other and are read against each other, so they have to cover the same span:
+// a wider window on one would put a spike and its gap at different places.
+// Two minutes is as far back as a chart of seconds stays readable.
+const WindowSeconds = 120
 
 // SessionRTT returns the peak and median round trip of the session so far.
 // The median needs a few samples to mean anything, so an empty second value is
@@ -106,9 +142,13 @@ func (s *State) ResetSession() {
 	s.metrics.RetransmitQueueDrops = 0
 	s.metrics.MediaSendDropped = 0
 	s.metrics.History = nil
+	s.metrics.Slots = nil
 	s.metrics.HasTotalLatency = false
 	s.metrics.HasReceiverBuffer = false
 	s.metrics.HasNetworkRTT = false
+	s.lastSkipped = 0
+	s.lastRecoveries = 0
+	s.lastExpired = 0
 }
 
 // State is the shared, mutex-guarded app model.
@@ -119,6 +159,22 @@ type State struct {
 	engine    Hello
 	haveHello bool
 	lastErr   string
+
+	// The last cumulative gap counters the engine reported, so the next report
+	// can be turned into what happened in between.
+	lastSkipped    uint64
+	lastRecoveries uint64
+	lastExpired    uint64
+}
+
+// diff is how much a cumulative counter moved since it was last read. The
+// engine restarts its counters with each session, so a value that goes
+// backwards means a new session rather than a negative count.
+func diff(now, before uint64) uint64 {
+	if now < before {
+		return now
+	}
+	return now - before
 }
 
 // NewState returns an idle state.
@@ -132,6 +188,7 @@ func (s *State) Snapshot() Metrics {
 	defer s.mu.RUnlock()
 	m := s.metrics
 	m.History = append([]float64(nil), m.History...)
+	m.Slots = append([]Slot(nil), m.Slots...)
 	return m
 }
 
@@ -217,6 +274,16 @@ func (s *State) Apply(ev Event) {
 		var haveRTT bool
 		var members int
 
+		// The engine's counters are cumulative over the session, not per
+		// report: it sends the total so far each time. So each report replaces
+		// the last rather than adding to it - a running sum would count every
+		// packet once per report that followed it. Members of a stereo pair
+		// are the one place the numbers do add up, because a pair sends to
+		// both halves and each half counts its own.
+		var sent, sendErrors, backlogged, dropped uint64
+		var requests, resends, missing, expired, queueDrops uint64
+		var feedbackFailures uint64
+
 		for _, m := range tm.Members {
 			members++
 			if m.Media.ReceiverLatencyMs > deepest {
@@ -229,21 +296,32 @@ func (s *State) Apply(ev Event) {
 				haveRTT = true
 			}
 			s.metrics.FeedbackDelayed = s.metrics.FeedbackDelayed || m.Health.FeedbackDelayed
-			s.metrics.FeedbackFailures += m.Health.FeedbackFailures
+			feedbackFailures += m.Health.FeedbackFailures
 
 			// Sum the counters across members: a pair sends to both halves.
-			s.metrics.PacketsSent += m.Media.PacketsSent
-			s.metrics.MediaSendErrors += m.Media.MediaSendErrors
-			s.metrics.MediaBacklogged += m.Media.MediaSendBacklogged
-			s.metrics.MediaSendDropped += m.Media.MediaSendDropped
-			s.metrics.RetransmitRequests += m.Media.RetransmitRequests
-			s.metrics.RetransmitsSent += m.Media.RetransmitsSent
-			s.metrics.RetransmitMissing += m.Media.RetransmitMissing
-			s.metrics.RetransmitExpired += m.Media.RetransmitExpired
-			s.metrics.RetransmitQueueDrops += m.Media.RetransmitQueueDrops
+			sent += m.Media.PacketsSent
+			sendErrors += m.Media.MediaSendErrors
+			backlogged += m.Media.MediaSendBacklogged
+			dropped += m.Media.MediaSendDropped
+			requests += m.Media.RetransmitRequests
+			resends += m.Media.RetransmitsSent
+			missing += m.Media.RetransmitMissing
+			expired += m.Media.RetransmitExpired
+			queueDrops += m.Media.RetransmitQueueDrops
 			s.metrics.BacklogPackets = max(s.metrics.BacklogPackets, m.Media.BacklogPackets)
 			s.metrics.BacklogLimit = max(s.metrics.BacklogLimit, m.Media.BacklogLimitPackets)
 		}
+
+		s.metrics.PacketsSent = sent
+		s.metrics.MediaSendErrors = sendErrors
+		s.metrics.MediaBacklogged = backlogged
+		s.metrics.MediaSendDropped = dropped
+		s.metrics.RetransmitRequests = requests
+		s.metrics.RetransmitsSent = resends
+		s.metrics.RetransmitMissing = missing
+		s.metrics.RetransmitExpired = expired
+		s.metrics.RetransmitQueueDrops = queueDrops
+		s.metrics.FeedbackFailures = feedbackFailures
 
 		if haveBuffer {
 			s.metrics.ReceiverBufferMs = deepest
@@ -272,9 +350,27 @@ func (s *State) Apply(ev Event) {
 			s.metrics.TotalLatencyMs = total
 			s.metrics.HasTotalLatency = true
 			s.metrics.History = append(s.metrics.History, total)
-			if len(s.metrics.History) > 180 {
-				s.metrics.History = s.metrics.History[len(s.metrics.History)-180:]
+			if len(s.metrics.History) > WindowSeconds {
+				s.metrics.History = s.metrics.History[len(s.metrics.History)-WindowSeconds:]
 			}
+		}
+
+		// One entry per report, which the engine sends once a second, so the
+		// timeline is the session second by second. The gap counters are
+		// cumulative, so what this second held is the difference from the
+		// previous report.
+		slot := Slot{
+			Skipped:    diff(tm.SkippedPackets, s.lastSkipped),
+			Recoveries: diff(tm.SenderLateRecoveries, s.lastRecoveries),
+			Expired:    diff(expired, s.lastExpired),
+		}
+		if haveBuffer {
+			slot.LatencyMs = s.metrics.TotalLatencyMs
+		}
+		s.lastSkipped, s.lastRecoveries, s.lastExpired = tm.SkippedPackets, tm.SenderLateRecoveries, expired
+		s.metrics.Slots = append(s.metrics.Slots, slot)
+		if len(s.metrics.Slots) > WindowSeconds {
+			s.metrics.Slots = s.metrics.Slots[len(s.metrics.Slots)-WindowSeconds:]
 		}
 
 	case "stopped":

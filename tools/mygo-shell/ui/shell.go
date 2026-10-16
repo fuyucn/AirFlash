@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
-	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
@@ -30,6 +29,17 @@ type Deps struct {
 	OnMode    func(settings.Mode)
 	OnClose   func()
 	OnQuit    func()
+
+	// OnDeviceVolume sets a receiver's own volume, which the engine applies to
+	// the device rather than to the local mix.
+	OnDeviceVolume func(discovery.Receiver, float64)
+	// OnOpenWindow opens the main window on a named page, which is how the
+	// panel reaches the full picture and the settings.
+	OnOpenWindow func(string)
+	// PlayingID returns the receiver playback is currently going to, or "".
+	// The engine streams to hosts, not to a receiver, so the caller is what
+	// knows which receiver those hosts belong to.
+	PlayingID func() string
 }
 
 // page identifies the content shown beside the sidebar.
@@ -92,19 +102,17 @@ func (s *Shell) View(c *ui.Context) {
 	})
 }
 
-// sidebar is the navigation column. macOS puts a translucent material behind
-// it; in lightweight mode it is a plain tone step instead.
+// sidebar is the navigation column: a block of one tone step, divided from the
+// content by a dashed rule.
 func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
-	bar := ui.Column(c).Width(228).FillHeight().Padding(16, 14).Gap(2)
-	if cfg.Mode == settings.ModeLightweight {
-		bar.Background(p.SurfaceHi)
-	} else {
-		bar.Material(glass.Glass{Style: glass.Regular})
-	}
+	bar := ui.Column(c).Width(196).FillHeight().Padding(14).Gap(2).Radius(0)
+	bar.Background(p.Surface)
+	// The rule is on the content side of the seam, so the two blocks meet at a
+	// dashed line rather than at a change of tone alone.
+	bar.BorderWidth(0, 1, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 	bar.Children(func() {
-		ui.Row(c).Gap(9).Padding(6, 6, 6, 14).Children(func() {
-			ui.Text(c, "AirFlash").FontSize(sizeTitle).Bold().TextColor(p.Ink)
-		})
+		ui.Text(c, "AIRFLASH").FontSize(sizeSmall).Bold().TextColor(p.Ink).
+			LetterSpacing(1.2).Padding(4, 4, 16, 4)
 
 		s.navItem(c, p, "Stats", pageStats)
 		s.navItem(c, p, "Receivers", pageReceivers)
@@ -116,15 +124,16 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 		// the one fact the user needs at a glance.
 		st := s.deps.State.Snapshot()
 		label, col := phaseLabel(p, st.Phase)
-		ui.Column(c).Padding(6).Gap(3).Children(func() {
-			ui.Row(c).Gap(7).Children(func() {
-				ui.Box(c).Width(8).Height(8).Radius(4).Background(col)
+		ui.Column(c).Padding(8, 4, 4, 4).Gap(4).Children(func() {
+			ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
 				ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
 			})
 			if cfg.Mode == settings.ModeLightweight {
-				ui.Text(c, "lightweight").FontSize(sizeSmall).TextColor(p.InkMuted)
+				ui.Text(c, "LIGHTWEIGHT").FontSize(sizeSmall).TextColor(p.InkMuted).
+					LetterSpacing(0.9)
 			}
-		})
+		}).BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 	})
 }
 
@@ -132,7 +141,7 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 	selected := s.page == target
 	// Selection is shown by a step in tone, not by the accent: the accent is
 	// reserved for the action and the live reading, so it keeps its meaning.
-	row := ui.Row(c).FillWidth().Padding(8, 10).Radius(7).Gap(8)
+	row := ui.Row(c).FillWidth().Padding(8, 9).Radius(0).Gap(8)
 	if selected {
 		row.Background(p.SurfaceHi)
 	}
@@ -144,7 +153,7 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 		ui.Text(c, label).FontSize(sizeSmall).TextColor(col)
 		if selected {
 			ui.Spacer(c).Grow(1)
-			ui.Box(c).Width(3).Height(14).Radius(2).Background(p.Accent)
+			ui.Box(c).Width(6).Height(6).Radius(0).Background(p.Accent)
 		}
 	})
 	if row.Clicked() {
@@ -177,10 +186,107 @@ func (s *Shell) statsPage(c *ui.Context, p palette, cfg settings.Settings, st en
 		s.headline(c, p, cfg, st)
 		if cfg.ShowTrend {
 			s.trend(c, p, cfg, st)
+			s.gaps(c, p, st)
 		}
 		s.controls(c, p, cfg, st)
 		s.diagnostics(c, p, cfg, st)
 	})
+}
+
+// gaps draws the session second by second, marking the seconds that lost
+// audio.
+//
+// The latency chart shows the network and is always moving; this shows the
+// audio, and is empty until something actually goes wrong. That is the
+// question a stutter raises - "did it drop, and when?" - and a line of numbers
+// cannot answer it: the shape of the timeline can.
+func (s *Shell) gaps(c *ui.Context, p palette, st engine.Metrics) {
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
+		ui.Row(c).FillWidth().Children(func() {
+			sectionLabel(c, p, "GAPS")
+			ui.Spacer(c).Grow(1)
+			ui.Text(c, gapSummary(st.Slots)).FontSize(sizeBody).
+				TextColor(gapSummaryColor(p, st.Slots))
+		})
+
+		if len(st.Slots) == 0 {
+			ui.Text(c, "One mark per second of playback appears here. Nothing has been lost so far.").
+				FontSize(sizeBody).TextColor(p.InkMuted)
+			return
+		}
+
+		ribbon := ui.Box(c).FillWidth().Height(34).Radius(0).Background(p.Surface)
+		ribbon.Draw(func(pt *ui.Painter, r ui.Rect) {
+			drawGapRibbon(pt, r, p, st.Slots)
+		})
+
+		ui.Row(c).FillWidth().Children(func() {
+			ui.Text(c, fmt.Sprintf("%d s ago", len(st.Slots))).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+			ui.Spacer(c).Grow(1)
+			ui.Text(c, "now").FontSize(sizeSmall).TextColor(p.InkMuted)
+		})
+	})
+}
+
+// gapSummary is the one line that answers whether anything was lost.
+func gapSummary(slots []engine.Slot) string {
+	gapped := 0
+	for _, s := range slots {
+		if s.Gapped() {
+			gapped++
+		}
+	}
+	if len(slots) == 0 {
+		return "nothing measured yet"
+	}
+	if gapped == 0 {
+		return fmt.Sprintf("none in the last %d s", len(slots))
+	}
+	return fmt.Sprintf("%d of %d s lost audio", gapped, len(slots))
+}
+
+func gapSummaryColor(p palette, slots []engine.Slot) ui.Color {
+	if len(slots) == 0 {
+		// Nothing has been measured, so nothing can be called fine: green here
+		// would be a claim the session has not earned.
+		return p.InkMuted
+	}
+	for _, s := range slots {
+		if s.Gapped() {
+			return p.Warning
+		}
+	}
+	return p.Success
+}
+
+// drawGapRibbon draws one column per second: flat where the audio was whole,
+// full height where a second lost something.
+//
+// A gap is drawn as a solid mark rather than a coloured point because it is a
+// count, not a level: one skipped slot and twelve look the same on a timeline
+// of seconds, and what matters is that the second was not clean.
+func drawGapRibbon(pt *ui.Painter, r ui.Rect, p palette, slots []engine.Slot) {
+	if len(slots) == 0 || r.W <= 0 {
+		return
+	}
+	// One column per second, but never thinner than a visible mark, so a short
+	// session does not draw a picket fence of hairlines.
+	col := max(r.W/float32(len(slots)), 3)
+	// The newest second is at the right edge, so the eye reads left to right as
+	// the session ran.
+	x := r.X + r.W - col
+	for i := len(slots) - 1; i >= 0 && x+col > r.X; i-- {
+		s := slots[i]
+		if s.Gapped() {
+			pt.Fill(ui.Rect{X: x, Y: r.Y, W: col - 1, H: r.H}, p.Warning, 0)
+		} else {
+			// A clean second is a low tick: enough to see the session running,
+			// quiet enough that a gap stands out against it.
+			pt.Fill(ui.Rect{X: x, Y: r.Y + r.H - 3, W: col - 1, H: 3}, p.Hairline, 0)
+		}
+		x -= col
+	}
 }
 
 // headline is the current state in one line of large figures, with the parts
@@ -238,7 +344,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Row(c).FillWidth().Children(func() {
-			ui.Text(c, "Latency over time").FontSize(sizeBody).TextColor(p.InkMuted)
+			sectionLabel(c, p, "LATENCY OVER TIME")
 			ui.Spacer(c).Grow(1)
 			if st.HasTotalLatency && len(st.History) > 0 {
 				ui.Text(c, fmt.Sprintf("%.0f ms now", st.History[len(st.History)-1])).
@@ -253,7 +359,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 		}
 
 		hist := st.History
-		plot := ui.Box(c).FillWidth().Height(120).Background(p.SurfaceHi)
+		plot := ui.Box(c).FillWidth().Height(132).Radius(0).Background(p.Surface)
 		plot.Draw(func(pt *ui.Painter, r ui.Rect) {
 			drawLatencyPlot(pt, r, p, hist, target)
 		})
@@ -412,8 +518,11 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 		// Volume, as a labelled slider the width of the content.
 		gain := cfg.Gain
 		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, fmt.Sprintf("Volume  %.0f%%", gain*100)).
-				FontSize(sizeBody).TextColor(p.InkMuted)
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				sectionLabel(c, p, "VOLUME")
+				ui.Text(c, fmt.Sprintf("%.0f%%", gain*100)).
+					FontSize(sizeBody).TextColor(p.InkMuted)
+			})
 			ui.Slider(c, &gain, 0, 1).FillWidth().OnChange(func() {
 				if s.deps.OnGain != nil {
 					s.deps.OnGain(gain)
@@ -474,7 +583,7 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 
 	ui.Column(c).Gap(8).Children(func() {
 		ui.Row(c).Gap(10).Children(func() {
-			ui.Text(c, "Latency").FontSize(sizeSmall).TextColor(p.Ink)
+			sectionLabel(c, p, "LATENCY")
 			ui.Text(c, "milliseconds").FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
@@ -529,7 +638,7 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Row(c).FillWidth().Children(func() {
-			ui.Text(c, "Losses").FontSize(sizeBody).TextColor(p.InkMuted)
+			sectionLabel(c, p, "LOSSES")
 			ui.Spacer(c).Grow(1)
 			if unhealthy {
 				ui.Text(c, "something is being lost").FontSize(sizeBody).TextColor(p.Warning)
@@ -584,7 +693,7 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 
 		for _, r := range found {
 			rec := r
-			row := ui.Row(c).FillWidth().Padding(12, 14).Gap(12)
+			row := ui.Row(c).FillWidth().Padding(14, 2).Gap(12).Radius(0)
 			row.Children(func() {
 				ui.Column(c).Gap(3).Children(func() {
 					ui.Row(c).Gap(8).Children(func() {
@@ -613,6 +722,9 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 					}
 				}
 			})
+			// One dashed rule under each receiver, which is what separates
+			// them: the same divider the panel and the sections use.
+			row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 		}
 	})
 }
@@ -642,7 +754,8 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			ui.Text(c, "Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
 				"either way.").FontSize(sizeSmall).TextColor(p.InkMuted)
-		})
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Text(c, "Closing the window").FontSize(sizeBody).TextColor(p.Ink)

@@ -168,10 +168,168 @@ func TestTheLatencyHistoryGrowsWithEachReport(t *testing.T) {
 func TestTheHistoryIsBounded(t *testing.T) {
 	// An unbounded slice would grow for the length of a session.
 	st := NewState()
-	for i := 0; i < 400; i++ {
+	for i := 0; i < WindowSeconds+50; i++ {
 		st.Apply(transportEvent(t, oneMember))
 	}
-	if got := len(st.Snapshot().History); got > 180 {
-		t.Errorf("history has %d points, want it capped at 180", got)
+	if got := len(st.Snapshot().History); got > WindowSeconds {
+		t.Errorf("history has %d points, want it capped at %d", got, WindowSeconds)
+	}
+}
+
+// cumulativeReport is a report whose counters have run up to total, the way the
+// engine sends them: it reports the session's running total every second, not
+// what happened in the last one.
+func cumulativeReport(t *testing.T, total uint64) Event {
+	t.Helper()
+	member := `{"host":"10.0.10.31","media":{"packets_sent":` +
+		itoa(total) + `,"retransmit_requests":` + itoa(total/10) +
+		`,"retransmit_expired":` + itoa(total/100) +
+		`,"receiver_latency_ms":480.0},"health":{"feedback_failures":` +
+		itoa(total/20) + `,"feedback_rtt_ms":18.5}}`
+	return transportEvent(t, member)
+}
+
+func itoa(v uint64) string {
+	if v == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for v > 0 {
+		i--
+		b[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(b[i:])
+}
+
+func TestCumulativeCountersAreNotAddedUpAgain(t *testing.T) {
+	// The engine reports a running total, so three reports of 125, 250 and 375
+	// packets mean 375 packets were sent. Adding the reports together would
+	// claim 750, and the counters are what the user reads to judge a stutter.
+	st := NewState()
+	for _, total := range []uint64{125, 250, 375} {
+		st.Apply(cumulativeReport(t, total))
+	}
+	m := st.Snapshot()
+
+	if m.PacketsSent != 375 {
+		t.Errorf("packets sent = %d, want the engine's own total of 375", m.PacketsSent)
+	}
+	if m.RetransmitRequests != 37 {
+		t.Errorf("retransmit requests = %d, want 37", m.RetransmitRequests)
+	}
+	if m.FeedbackFailures != 18 {
+		t.Errorf("feedback failures = %d, want 18", m.FeedbackFailures)
+	}
+}
+
+func TestAStereoPairStillAddsItsTwoMembersUp(t *testing.T) {
+	// Each half of a pair keeps its own counters, so across members the numbers
+	// do add - the fix is only about not adding one member's total to itself.
+	left := `{"host":"10.0.10.31","media":{"packets_sent":100},
+	  "health":{"feedback_failures":3}}`
+	right := `{"host":"10.0.10.32","media":{"packets_sent":120},
+	  "health":{"feedback_failures":4}}`
+	st := NewState()
+	st.Apply(transportEvent(t, left+","+right))
+	m := st.Snapshot()
+
+	if m.PacketsSent != 220 {
+		t.Errorf("packets sent = %d, want 220", m.PacketsSent)
+	}
+	if m.FeedbackFailures != 7 {
+		t.Errorf("feedback failures = %d, want 7", m.FeedbackFailures)
+	}
+}
+
+func TestTheSlotTimelineRecordsWhereAGapWas(t *testing.T) {
+	// A latency chart shows the network. This is the audio: one entry per
+	// second, saying which seconds actually lost something.
+	st := NewState()
+	st.Apply(transportEvent(t, oneMember))
+	st.Apply(gapReport(t, 0, 0, 0))
+	st.Apply(gapReport(t, 5, 1, 2))
+	st.Apply(gapReport(t, 5, 1, 2))
+
+	slots := st.Snapshot().Slots
+	if len(slots) != 4 {
+		t.Fatalf("got %d slots, want one per report (4)", len(slots))
+	}
+	if slots[1].Gapped() {
+		t.Error("a second with nothing lost was marked as a gap")
+	}
+	if got := slots[2].Skipped; got != 5 {
+		t.Errorf("skipped = %d, want the 5 that were new in that second", got)
+	}
+	if got := slots[2].Recoveries; got != 1 {
+		t.Errorf("recoveries = %d, want 1", got)
+	}
+	if got := slots[2].Expired; got != 2 {
+		t.Errorf("expired = %d, want 2", got)
+	}
+	// The counters did not move between the last two reports, so the last
+	// second lost nothing. Storing the total would have marked it as a gap too.
+	if slots[3].Gapped() {
+		t.Error("a second whose counters did not move was marked as a gap")
+	}
+}
+
+func gapReport(t *testing.T, skipped, recoveries, expired uint64) Event {
+	t.Helper()
+	raw := `{"version":1,"id":"c1","session_id":"s","event":"transport_metrics",
+	  "session_uptime_ms":4000,"sender_late_recoveries":` + itoa(recoveries) +
+		`,"skipped_packets":` + itoa(skipped) + `,"max_send_lateness_us":900,
+	  "members":[{"host":"10.0.10.31","media":{"retransmit_expired":` + itoa(expired) +
+		`,"receiver_latency_ms":480.0},"health":{"feedback_rtt_ms":18.5}}]}`
+	var ev Event
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatal(err)
+	}
+	ev.Raw = json.RawMessage(raw)
+	return ev
+}
+
+func TestTheSlotTimelineIsBounded(t *testing.T) {
+	st := NewState()
+	for i := 0; i < WindowSeconds+50; i++ {
+		st.Apply(gapReport(t, 0, 0, 0))
+	}
+	if got := len(st.Snapshot().Slots); got > WindowSeconds {
+		t.Errorf("timeline has %d slots, want it capped at %d", got, WindowSeconds)
+	}
+}
+
+func TestANewSessionStartsTheTimelineOver(t *testing.T) {
+	// Counters restart with the session, so carrying the old timeline over
+	// would report the previous session's gaps as this one's.
+	st := NewState()
+	st.Apply(gapReport(t, 9, 3, 4))
+	st.ResetSession()
+
+	m := st.Snapshot()
+	if len(m.Slots) != 0 {
+		t.Errorf("a new session kept %d slots from the last one", len(m.Slots))
+	}
+	// And the next report must not read the restart as a negative difference.
+	st.Apply(gapReport(t, 0, 0, 0))
+	if got := st.Snapshot().Slots; len(got) != 1 || got[0].Gapped() {
+		t.Errorf("after a restart the first slot = %+v, want one clean slot", got)
+	}
+}
+
+func TestTheTwoChartsCoverTheSameSpan(t *testing.T) {
+	// The latency chart and the gap ribbon sit one above the other and are read
+	// against each other: a spike and the gap it caused have to line up. They
+	// only do if both keep the same number of seconds, so this pins that down.
+	st := NewState()
+	for i := 0; i < WindowSeconds+40; i++ {
+		st.Apply(cumulativeReport(t, uint64(i+1)*125))
+	}
+	m := st.Snapshot()
+	if len(m.History) != len(m.Slots) {
+		t.Errorf("latency has %d points and the timeline has %d slots: "+
+			"a spike and its gap would sit at different places",
+			len(m.History), len(m.Slots))
 	}
 }

@@ -116,3 +116,80 @@ Honest gaps, from `references/06-native-conventions.md`:
   the app opens a menu or notifies yet.
 - **Full keyboard navigation** — the framework provides Tab and arrow movement;
   it has not been audited against this app's controls.
+
+---
+
+# Third pass: an instrument, not a dashboard
+
+The user asked for square corners, dashed rules, and a grayscale palette, and
+for the design to come from this product rather than from a template. This pass
+does that, and fixes the bugs that looking at the running surface found.
+
+## The look, and why it is this one
+
+AirFlash exists to measure something, so it is drawn like the panel of a
+measuring device. Three rules carry it:
+
+| Rule | What it means |
+| --- | --- |
+| **Grayscale** | Everything is black, white, or a step of grey. The only chroma is a signal - a latency over target, a lost second - so colour always means something is wrong or something is fine, and never decorates. |
+| **Square** | `Theme.Radius` is 0. No row, button, field, or panel is rounded; blocks are rectangles that meet. |
+| **Dashed** | Sections are divided by a dashed hairline, not by a card or a gap. A dash is the cheapest divider there is, and reads as a rule drawn on a chart. |
+
+The accent is no longer a colour: it is the darkest ink, because the action in a
+grayscale interface is a black block. The three signal colours are the only
+chroma in the app.
+
+## The form factor was wrong
+
+The upstream app's real surface is `ControlPanel.xaml`: `Width=440`,
+`SizeToContent=Height`, no resize, no taskbar button. That is the tray panel, and
+it is what the user sees almost every time the app is opened. The shell had been
+built as a 1040x640 sidebar window, which is the wrong shape for a menu bar app:
+it filled the screen to show three receivers.
+
+The panel is now the main surface. A tray click opens a 420 DIP flyout beside
+the icon, receivers first, with the window kept for the full reading and the
+settings. Nothing opens a window at launch.
+
+## What the screenshots found
+
+Rendering the panel and the window off screen - `cmd/render` - and looking at
+them found four things the code did not show:
+
+1. **Every receiver offered Stop and a volume slider while playing.** The engine
+   runs one session, and a session is one receiver, so three rows offered three
+   controls for one session; pressing a wrong one stopped playback while the
+   panel claimed it was starting it. The panel now knows which receiver the
+   session is on (`Deps.PlayingID`) and only that row carries Stop and volume.
+2. **The flyout was 200 DIP tall and clipped.** `NewFlyout` needs a height, and
+   the panel never gave one, so everything below the second receiver was cut
+   off. `Panel.Height` now measures the panel's own content.
+3. **Padding arguments were in the wrong order.** `Padding` is CSS order -
+   top, right, bottom, left - and `Padding(0, 0, 0, 20)` was written where
+   bottom padding was meant. The dashed rule drew through the wrapped text on
+   the Settings page. Caught only in a screenshot.
+4. **The volume slider kept the framework's blue.** The panel did not call
+   `SetTheme`, so the one widget the framework draws was the only thing in the
+   window not in the palette.
+
+## A real bug the pass fixed in the model
+
+The engine's counters are **cumulative over the session**: it reports the
+running total every second, not what happened in the last second. The shell was
+adding each report to the last, so after a minute of playback the packet count
+read about sixty times too high, and every counter the user reads to judge a
+stutter was inflated the same way. Each report now replaces the last, except
+across the members of a stereo pair, where the numbers do add up because each
+half counts its own.
+
+## The Gaps timeline
+
+The user's question about a stutter is not only "how bad is the network" but
+"did it drop, and when?". The latency chart answers the first; nothing answered
+the second. `engine.Slot` is one entry per engine report - the engine reports
+once a second, so it is a second-by-second record of the session - holding the
+*change* in the gap counters since the previous report. The Stats page draws
+them as a ribbon: a low tick for a clean second, a full-height mark for a second
+that lost audio. In the render above the marks line up with the latency spikes,
+which is the whole point.

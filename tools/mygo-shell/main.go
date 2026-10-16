@@ -70,9 +70,15 @@ type App struct {
 
 	client atomic.Pointer[engine.Client]
 	win    atomic.Pointer[mygo.Window]
+	tray   *mygo.Tray
+	panel  *appui.Panel
+	flyout *mygo.Window
 
 	peers     atomic.Pointer[[]engine.Peer]
 	receivers atomic.Pointer[[]discovery.Receiver]
+	// playing is the receiver playback is going to, or "". The engine streams
+	// to hosts, so the receiver those hosts belong to is the shell's own fact.
+	playing atomic.Pointer[string]
 
 	// discoveryCancel stops the mDNS browse. Discovery runs only while a window
 	// is open, so a closed window costs nothing on the network either.
@@ -94,12 +100,12 @@ func (a *App) run() {
 	// Nothing is quit here on purpose.
 	mygo.App.OnWindowAllClosed(func() {})
 
-	// The tray is the app's permanent surface: it exists whether or not a
-	// window does, and it is how the user gets the window back. Both it and
-	// the first window need a ready application.
+	// The tray is the app's permanent surface, and the panel it opens is the
+	// app's main surface: the user opens it to choose what to play to. The
+	// window is for settings and for the full reading, so nothing opens one at
+	// launch.
 	mygo.App.WhenReady(func() {
 		a.installTray()
-		a.openWindow(a.settings.Current())
 		a.startDiscovery()
 	})
 
@@ -108,7 +114,12 @@ func (a *App) run() {
 	}
 }
 
-func (a *App) openWindow(cfg settings.Settings) {
+func (a *App) openWindow(page string) {
+	if w := a.win.Load(); w != nil {
+		w.Show()
+		w.Focus()
+		return
+	}
 	if !a.life.Open() {
 		return
 	}
@@ -118,6 +129,7 @@ func (a *App) openWindow(cfg settings.Settings) {
 		Life:      a.life,
 		Peers:     a.currentPeers,
 		Receivers: a.Receivers,
+		PlayingID: a.PlayingID,
 		OnPlay:    a.playReceiver,
 		OnStart:   a.startStream,
 		OnStop:    a.stopStream,
@@ -139,26 +151,22 @@ func (a *App) openWindow(cfg settings.Settings) {
 			// The mode changes what the window draws, so rebuild it. Rebuilding
 			// is also what frees a webview's process tree when switching away.
 			a.life.Close()
-			a.openWindow(a.settings.Current())
+			a.openWindow(page)
 		},
 		OnClose: func() { a.life.Close() },
 		OnQuit:  func() { mygo.App.Quit() },
 	})
+	view.SetPage(page)
 
 	opts := mygo.WindowOptions{
 		Title:           "AirFlash",
-		Width:           980,
-		Height:          680,
-		MinWidth:        820,
-		MinHeight:       560,
-		StateKey:        "main",
-		BackgroundColor: "light-dark(#F2F2F7, #1C1C1E)",
+		Width:           880,
+		Height:          640,
+		MinWidth:        720,
+		MinHeight:       520,
+		StateKey:        "window",
+		BackgroundColor: "light-dark(#FFFFFF, #0C0C0E)",
 		Content:         ui.View(view.View),
-	}
-	if cfg.Mode != settings.ModeLightweight {
-		// A translucent window material is what makes the bars read as
-		// macOS's. Lightweight mode takes no material at all.
-		opts.Vibrancy = mygo.VibrancySidebar
 	}
 	w := mygo.NewWindow(opts)
 	a.win.Store(w)
@@ -169,8 +177,11 @@ func (a *App) installTray() {
 	// is reported rather than fatal.
 	icon := trayIcon()
 	menu := mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Show AirFlash", Click: func(*mygo.MenuItem, *mygo.Window) {
-			a.openWindow(a.settings.Current())
+		{Label: "Stats", Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.openWindow("stats")
+		}},
+		{Label: "Settings", Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.openWindow("settings")
 		}},
 		{Type: mygo.MenuItemSeparator},
 		{Label: "Quit", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
@@ -182,10 +193,15 @@ func (a *App) installTray() {
 		Menu:    menu,
 	})
 	if err != nil {
-		log.Printf("tray unavailable: %v", err)
+		log.Printf("tray unavailable, opening the window instead: %v", err)
+		a.openWindow("stats")
 		return
 	}
-	tray.OnClick(func() { a.openWindow(a.settings.Current()) })
+	a.tray = tray
+	// On Linux a tray icon reports neither clicks nor its own position, so a
+	// menu item is the way to the panel and the panel opens in the middle of
+	// the display. On the other platforms a click is enough.
+	tray.OnClick(a.togglePanel)
 }
 
 // adaptedTarget is the latency the shell worked out from previous sessions.
@@ -242,6 +258,73 @@ func (a *App) recordSession() {
 		})
 	})
 	a.state.ResetSession()
+}
+
+// togglePanel opens the tray panel, or closes it if it is already open.
+//
+// The panel is the app's main surface: a narrow flyout beside the tray icon,
+// not a window. It is destroyed rather than hidden when it closes, so it holds
+// nothing while the user is not looking at it.
+func (a *App) togglePanel() {
+	if w := a.flyout; w != nil {
+		w.Close()
+		a.flyout = nil
+		return
+	}
+	if a.tray == nil {
+		// Without a tray there is nothing to anchor to, so the window stands in.
+		a.openWindow("stats")
+		return
+	}
+
+	panel := a.panelView()
+	w := mygo.NewFlyout(mygo.FlyoutOptions{
+		Tray:      a.tray,
+		Placement: mygo.PlacementBottom,
+		Gap:       6,
+		Width:     appui.PanelWidth(),
+		Height:    panel.Height(),
+		Focusable: true,
+		Shadow:    true,
+		Content:   ui.View(panel.View),
+	})
+	// The panel is destroyed when it closes, so it holds nothing while the user
+	// is not looking at it.
+	w.OnClosed(func() { a.flyout = nil })
+	a.flyout = w
+}
+
+// panelView builds the panel with the app's callbacks.
+func (a *App) panelView() *appui.Panel {
+	return appui.NewPanel(appui.Deps{
+		State:     a.state,
+		Settings:  a.settings,
+		Life:      a.life,
+		Peers:     a.currentPeers,
+		Receivers: a.Receivers,
+		OnPlay:    a.playReceiver,
+		OnStop:    a.stopStream,
+		OnGain: func(g float64) {
+			a.settings.Update(func(s *settings.Settings) { s.Gain = g })
+			if c := a.client.Load(); c != nil {
+				_, _ = c.SetGain(g)
+			}
+		},
+		OnDeviceVolume: a.setDeviceVolume,
+		OnOpenWindow:   a.openWindow,
+		OnQuit:         func() { mygo.App.Quit() },
+	})
+}
+
+// setDeviceVolume asks the engine to set a receiver's own volume.
+func (a *App) setDeviceVolume(rec discovery.Receiver, volume float64) {
+	c := a.client.Load()
+	if c == nil || !c.Running() {
+		return
+	}
+	if _, err := c.SetDeviceVolume(volume); err != nil {
+		log.Printf("set device volume: %v", err)
+	}
 }
 
 // startDiscovery browses for receivers while a window is open.
@@ -309,7 +392,16 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	if len(peers) == 0 {
 		return
 	}
+	a.playing.Store(&r.ID)
 	a.startStreamTo(peers)
+}
+
+// PlayingID returns the receiver playback is going to, or "".
+func (a *App) PlayingID() string {
+	if id := a.playing.Load(); id != nil {
+		return *id
+	}
+	return ""
 }
 
 // startStream begins playback on a receiver, starting the engine if needed.
@@ -356,6 +448,7 @@ func (a *App) stopStream() {
 	if c := a.client.Load(); c != nil {
 		_, _ = c.Stop()
 	}
+	a.playing.Store(nil)
 	// The session is over, so what it showed about the network is now known.
 	a.recordSession()
 }
