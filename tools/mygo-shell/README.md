@@ -41,6 +41,35 @@ Native UI is the default recommendation. WebView2 ships with Windows 11 and is
 present on the vast majority of Windows 10 machines, but its cost is a process
 tree rather than a library, and on Linux it means WebKitGTK.
 
+## Latency: Auto
+
+The engine measures the round trip to the receiver and never acts on it, so a
+slower network stutters more: a resend only helps if it arrives before the
+packet's play deadline, which is `target - elapsed - round trip`. When the ping
+rises that window closes and the receiver plays over the gap.
+
+**Auto** is the default. It picks the target from what previous sessions turned
+out to be, and it is bounded by the setting beside it, which is a floor: Auto
+raises the target when a session showed a gap and eases it back after several
+clean ones. It only ever changes the target at a session boundary, never the
+play time of audio already in flight, which is what makes it safe.
+
+Choosing a fixed number turns Auto off and pins that target exactly.
+
+## The Stats page
+
+The first page is Stats. It shows:
+
+- the target, the receiver's playout buffer, and the network round trip, set
+  large, with the total that the observed parts add up to
+- a chart of the latency over time, with the target as a visible reference line
+  and readings that went over it marked
+- the counters that explain a stutter: how often the sender fell behind, how
+  many audio slots it discarded, and how many resends arrived too late
+
+`docs/STUTTER-ANALYSIS.md` reads the engine's send path and explains why a
+rising ping causes gaps, with the constants and the code that does it.
+
 ## Lightweight mode
 
 Settings has one switch that changes what the app costs to run:
