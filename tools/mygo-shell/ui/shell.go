@@ -100,7 +100,7 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 	}
 	bar.Children(func() {
 		ui.Row(c).Gap(9).Padding(6, 6, 6, 14).Children(func() {
-			ui.Text(c, "AirFlash").FontSize(16).Bold().TextColor(p.Ink)
+			ui.Text(c, "AirFlash").FontSize(sizeTitle).Bold().TextColor(p.Ink)
 		})
 
 		s.navItem(c, p, "Stats", pageStats)
@@ -116,10 +116,10 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 		ui.Column(c).Padding(6).Gap(3).Children(func() {
 			ui.Row(c).Gap(7).Children(func() {
 				ui.Box(c).Width(8).Height(8).Radius(4).Background(col)
-				ui.Text(c, label).FontSize(12).TextColor(p.InkMuted)
+				ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
 			})
 			if cfg.Mode == settings.ModeLightweight {
-				ui.Text(c, "lightweight").FontSize(11).TextColor(p.InkMuted)
+				ui.Text(c, "lightweight").FontSize(sizeSmall).TextColor(p.InkMuted)
 			}
 		})
 	})
@@ -127,16 +127,22 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 
 func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 	selected := s.page == target
+	// Selection is shown by a step in tone, not by the accent: the accent is
+	// reserved for the action and the live reading, so it keeps its meaning.
 	row := ui.Row(c).FillWidth().Padding(8, 10).Radius(7).Gap(8)
 	if selected {
-		row.Background(p.Accent)
+		row.Background(p.SurfaceHi)
 	}
 	row.Children(func() {
-		col := p.Ink
+		col := p.InkMuted
 		if selected {
-			col = p.AccentText
+			col = p.Ink
 		}
-		ui.Text(c, label).FontSize(13).TextColor(col)
+		ui.Text(c, label).FontSize(sizeSmall).TextColor(col)
+		if selected {
+			ui.Spacer(c).Grow(1)
+			ui.Box(c).Width(3).Height(14).Radius(2).Background(p.Accent)
+		}
 	})
 	if row.Clicked() {
 		s.page = target
@@ -160,7 +166,7 @@ func (s *Shell) toolbar(c *ui.Context, p palette, cfg settings.Settings, st engi
 		case pageSettings:
 			title = "Settings"
 		}
-		ui.Text(c, title).FontSize(15).Bold().TextColor(p.Ink)
+		ui.Text(c, title).FontSize(sizeTitle).Bold().TextColor(p.Ink)
 
 		ui.Spacer(c).Grow(1)
 
@@ -218,38 +224,38 @@ func (s *Shell) measurement(c *ui.Context, p palette, cfg settings.Settings, st 
 		ui.Row(c).Gap(44).Children(func() {
 			// The target is what the user chose.
 			ui.Column(c).Gap(2).Children(func() {
-				ui.Text(c, "Target").FontSize(12).TextColor(p.InkMuted)
-				ui.Text(c, fmt.Sprintf("%.0f", target)).FontSize(44).Bold().TextColor(p.Ink)
-				ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
+				ui.Text(c, "Target").FontSize(sizeSmall).TextColor(p.InkMuted)
+				ui.Text(c, fmt.Sprintf("%.0f", target)).FontSize(sizeFigure).Bold().TextColor(p.Ink)
+				ui.Text(c, "milliseconds").FontSize(sizeSmall).TextColor(p.InkMuted)
 			})
 
 			// The receiver's buffer is the biggest part of what is heard.
 			ui.Column(c).Gap(2).Children(func() {
-				ui.Text(c, "Receiver buffer").FontSize(12).TextColor(p.InkMuted)
+				ui.Text(c, "Receiver buffer").FontSize(sizeSmall).TextColor(p.InkMuted)
 				if st.HasReceiverBuffer {
-					ui.Text(c, fmt.Sprintf("%.0f", st.ReceiverBufferMs)).FontSize(44).Bold().
+					ui.Text(c, fmt.Sprintf("%.0f", st.ReceiverBufferMs)).FontSize(sizeFigure).Bold().
 						TextColor(p.Ink)
 					label := "milliseconds"
 					if st.ReceiverBufferEstimated {
 						label = "milliseconds, estimated"
 					}
-					ui.Text(c, label).FontSize(12).TextColor(p.InkMuted)
+					ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
 				} else {
-					ui.Text(c, "—").FontSize(44).Bold().TextColor(p.InkMuted)
-					ui.Text(c, "waiting for playback").FontSize(12).TextColor(p.InkMuted)
+					ui.Text(c, "—").FontSize(sizeFigure).Bold().TextColor(p.InkMuted)
+					ui.Text(c, "waiting for playback").FontSize(sizeSmall).TextColor(p.InkMuted)
 				}
 			})
 
 			// The network's round trip: what moves when the ping moves.
 			ui.Column(c).Gap(2).Children(func() {
-				ui.Text(c, "Network round trip").FontSize(12).TextColor(p.InkMuted)
+				ui.Text(c, "Network round trip").FontSize(sizeSmall).TextColor(p.InkMuted)
 				if st.HasNetworkRTT {
-					ui.Text(c, fmt.Sprintf("%.0f", st.NetworkRTTMs)).FontSize(44).Bold().
+					ui.Text(c, fmt.Sprintf("%.0f", st.NetworkRTTMs)).FontSize(sizeFigure).Bold().
 						TextColor(rttColor(p, st.NetworkRTTMs))
-					ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
+					ui.Text(c, "milliseconds").FontSize(sizeSmall).TextColor(p.InkMuted)
 				} else {
-					ui.Text(c, "—").FontSize(44).Bold().TextColor(p.InkMuted)
-					ui.Text(c, "not measured yet").FontSize(12).TextColor(p.InkMuted)
+					ui.Text(c, "—").FontSize(sizeFigure).Bold().TextColor(p.InkMuted)
+					ui.Text(c, "not measured yet").FontSize(sizeSmall).TextColor(p.InkMuted)
 				}
 			})
 		})
@@ -260,11 +266,11 @@ func (s *Shell) measurement(c *ui.Context, p palette, cfg settings.Settings, st 
 			ui.Row(c).Gap(8).Children(func() {
 				ui.Box(c).Width(8).Height(8).Radius(4).Background(band.Color)
 				ui.Text(c, fmt.Sprintf("About %.0f ms from capture to playback · %s",
-					st.TotalLatencyMs, band.Label)).FontSize(13).TextColor(p.InkMuted)
+					st.TotalLatencyMs, band.Label)).FontSize(sizeSmall).TextColor(p.InkMuted)
 			})
 		} else {
 			ui.Text(c, "Start playback and the measured delay appears here.").
-				FontSize(13).TextColor(p.InkMuted)
+				FontSize(sizeSmall).TextColor(p.InkMuted)
 		}
 	})
 }
@@ -290,9 +296,9 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 	if !st.HasTotalLatency {
 		card := ui.Column(c).FillWidth().Padding(20).Gap(4).Radius(14).Background(p.Surface)
 		card.Children(func() {
-			ui.Text(c, "Latency over time").FontSize(13).TextColor(p.Ink)
+			ui.Text(c, "Latency over time").FontSize(sizeSmall).TextColor(p.Ink)
 			ui.Text(c, "The measured latency appears here once playback starts, "+
-				"against the target you set.").FontSize(12).TextColor(p.InkMuted)
+				"against the target you set.").FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 		return
 	}
@@ -304,10 +310,10 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 	card.Children(func() {
 		// The headline: the latest reading, set large.
 		ui.Row(c).Gap(12).Children(func() {
-			ui.Text(c, "Latency over time").FontSize(13).TextColor(p.InkMuted)
+			ui.Text(c, "Latency over time").FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
 			ui.Text(c, fmt.Sprintf("%.0f ms now", hist[len(hist)-1])).
-				FontSize(13).Bold().TextColor(p.Ink)
+				FontSize(sizeSmall).Bold().TextColor(p.Ink)
 		})
 
 		plot := ui.Box(c).FillWidth().Height(140).Radius(8).Background(p.SurfaceHi)
@@ -318,11 +324,11 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 		// A scale the reader can use, and what the reference line means.
 		lo, hi := plotRange(hist, target)
 		ui.Row(c).Gap(10).Children(func() {
-			ui.Text(c, fmt.Sprintf("%.0f ms", lo)).FontSize(11).TextColor(p.InkMuted)
+			ui.Text(c, fmt.Sprintf("%.0f ms", lo)).FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
-			ui.Text(c, fmt.Sprintf("target %d ms", int(target))).FontSize(11).TextColor(p.InkMuted)
+			ui.Text(c, fmt.Sprintf("target %d ms", int(target))).FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
-			ui.Text(c, fmt.Sprintf("%.0f ms", hi)).FontSize(11).TextColor(p.InkMuted)
+			ui.Text(c, fmt.Sprintf("%.0f ms", hi)).FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 	})
 }
@@ -414,7 +420,7 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 		// Gain.
 		gain := cfg.Gain
 		ui.Column(c).Gap(8).Children(func() {
-			ui.Text(c, fmt.Sprintf("Volume  %.0f%%", gain*100)).FontSize(13).TextColor(p.Ink)
+			ui.Text(c, fmt.Sprintf("Volume  %.0f%%", gain*100)).FontSize(sizeSmall).TextColor(p.Ink)
 			ui.Slider(c, &gain, 0, 1).FillWidth().OnChange(func() {
 				if s.deps.OnGain != nil {
 					s.deps.OnGain(gain)
@@ -475,8 +481,8 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 
 	ui.Column(c).Gap(8).Children(func() {
 		ui.Row(c).Gap(10).Children(func() {
-			ui.Text(c, "Latency").FontSize(13).TextColor(p.Ink)
-			ui.Text(c, "milliseconds").FontSize(12).TextColor(p.InkMuted)
+			ui.Text(c, "Latency").FontSize(sizeSmall).TextColor(p.Ink)
+			ui.Text(c, "milliseconds").FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
 		seg := ui.Segmented(c, &index, labels...)
@@ -506,10 +512,10 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 				line += " · Auto, at your floor"
 			}
 		}
-		ui.Text(c, line).FontSize(12).TextColor(p.InkMuted)
+		ui.Text(c, line).FontSize(sizeSmall).TextColor(p.InkMuted)
 
 		if st.Phase == engine.PhaseStreaming {
-			ui.Text(c, "A new target applies to the next start.").FontSize(11).TextColor(p.InkMuted)
+			ui.Text(c, "A new target applies to the next start.").FontSize(sizeSmall).TextColor(p.InkMuted)
 		}
 	})
 }
@@ -531,11 +537,11 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 	card := ui.Column(c).FillWidth().Padding(20).Gap(12).Radius(14).Background(p.Surface)
 	card.Children(func() {
 		ui.Row(c).Gap(8).Children(func() {
-			ui.Text(c, "Diagnostics").FontSize(13).TextColor(p.Ink)
+			ui.Text(c, "Diagnostics").FontSize(sizeSmall).TextColor(p.Ink)
 			if unhealthy {
-				ui.Text(c, "· something is being lost").FontSize(12).TextColor(p.Warning)
+				ui.Text(c, "· something is being lost").FontSize(sizeSmall).TextColor(p.Warning)
 			} else {
-				ui.Text(c, "· nothing lost so far").FontSize(12).TextColor(p.Success)
+				ui.Text(c, "· nothing lost so far").FontSize(sizeSmall).TextColor(p.Success)
 			}
 		})
 
@@ -559,7 +565,7 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 
 		if st.FeedbackDelayed {
 			ui.Text(c, "The receiver's feedback is late, which is what a rising ping looks like.").
-				FontSize(12).TextColor(p.Warning)
+				FontSize(sizeSmall).TextColor(p.Warning)
 		}
 	})
 }
@@ -571,11 +577,11 @@ func (s *Shell) counter(c *ui.Context, p palette, label string, value uint64, hi
 		col = p.Warning
 	}
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(p.InkMuted)
-		ui.Text(c, fmt.Sprintf("%d", value)).FontSize(12).Bold().TextColor(col)
+		ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
+		ui.Text(c, fmt.Sprintf("%d", value)).FontSize(sizeSmall).Bold().TextColor(col)
 	})
 	if hint != "" && value > 0 {
-		ui.Text(c, hint).FontSize(11).TextColor(p.InkMuted)
+		ui.Text(c, hint).FontSize(sizeSmall).TextColor(p.InkMuted)
 	}
 }
 
@@ -589,9 +595,9 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 	card.Children(func() {
 		if len(found) == 0 {
 			ui.Column(c).Gap(6).Children(func() {
-				ui.Text(c, "Looking for receivers…").FontSize(13).TextColor(p.Ink)
+				ui.Text(c, "Looking for receivers…").FontSize(sizeSmall).TextColor(p.Ink)
 				ui.Text(c, "The PC and the HomePod have to be on the same network.").
-					FontSize(12).TextColor(p.InkMuted)
+					FontSize(sizeSmall).TextColor(p.InkMuted)
 			})
 			return
 		}
@@ -603,9 +609,9 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 			row.Children(func() {
 				ui.Column(c).Gap(3).Children(func() {
 					ui.Row(c).Gap(8).Children(func() {
-						ui.Text(c, rec.Name).FontSize(13).TextColor(p.Ink)
+						ui.Text(c, rec.Name).FontSize(sizeSmall).TextColor(p.Ink)
 						if rec.IsGroup() && !rec.Complete() {
-							ui.Text(c, "incomplete").FontSize(11).TextColor(p.Warning)
+							ui.Text(c, "incomplete").FontSize(sizeSmall).TextColor(p.Warning)
 						}
 					})
 					detail := rec.Address
@@ -615,7 +621,7 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 					if rec.IsGroup() {
 						detail = fmt.Sprintf("stereo · %d/2 · %s", len(rec.Members), detail)
 					}
-					ui.Text(c, detail).FontSize(11).TextColor(p.InkMuted)
+					ui.Text(c, detail).FontSize(sizeSmall).TextColor(p.InkMuted)
 				})
 
 				ui.Spacer(c).Grow(1)
@@ -649,19 +655,19 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 					s.deps.OnMode(settings.ModeStandard)
 				}
 			})
-			ui.Text(c, "Lightweight mode").FontSize(13).TextColor(p.Ink)
+			ui.Text(c, "Lightweight mode").FontSize(sizeSmall).TextColor(p.Ink)
 			ui.Text(c, "Drops the glass and the animation, redraws only when a reading changes, "+
 				"and samples the engine once a second. The audio path is untouched: the engine "+
-				"keeps its own process either way.").FontSize(12).TextColor(p.InkMuted)
+				"keeps its own process either way.").FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
 		ui.Divider(c)
 
 		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, "Closing the window").FontSize(13).TextColor(p.Ink)
+			ui.Text(c, "Closing the window").FontSize(sizeSmall).TextColor(p.Ink)
 			ui.Text(c, "Closing releases the window and everything it holds. Playback continues: "+
 				"the engine is a separate process, and the app stays in the tray.").
-				FontSize(12).TextColor(p.InkMuted)
+				FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 	})
 }

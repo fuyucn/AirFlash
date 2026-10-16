@@ -1,18 +1,25 @@
 // Package ui draws the AirFlash shell.
 //
-// The design follows macOS 26's own arrangement rather than a web page's:
-// a translucent sidebar and toolbar the content scrolls under, and content
-// that sits on flat surfaces. Glass is a material the system draws, used only
-// where macOS uses it - the bars and a few floating controls - never as
-// decoration on content.
+// The arrangement follows the platform: a sidebar and a toolbar the content
+// scrolls under, and content on flat surfaces. Glass is the material the system
+// draws, used only where the platform uses it - the bars and a few floating
+// controls - never as decoration on content.
+//
+// The palette is the one the design direction dealt for this brief, "frost and
+// slate": cool white and one paler blue-grey step holding everything, type in
+// dark slate rather than black, and a single teal accent that appears on the
+// action and the live reading only.
 package ui
 
 import (
 	"github.com/egoist/mygo/ui"
 )
 
-// palette is one appearance. Two values do the visible work: a ground and an
-// ink, with one accent that appears on the action and the live reading only.
+// palette is one appearance.
+//
+// Two values do the visible work: a ground and an ink. One accent carries the
+// action. The rest are steps between them, so surfaces separate by tone rather
+// than by lines.
 type palette struct {
 	Ground     ui.Color
 	Surface    ui.Color
@@ -27,37 +34,48 @@ type palette struct {
 	Hairline   ui.Color
 }
 
+// The type steps. The house rules set the floor: nothing smaller than 13px, and
+// running text at 16px or more. Five steps is the ceiling, so every size in the
+// interface maps onto one of these.
+const (
+	sizeSmall  float32 = 13 // labels, secondary notes
+	sizeBody   float32 = 16 // running text
+	sizeLead   float32 = 19 // a short statement
+	sizeFigure float32 = 44 // the headline numbers
+	sizeTitle  float32 = 22 // a page's one large line
+)
+
 // light is the daylight appearance.
 func light() palette {
 	return palette{
-		Ground:     ui.Hex("#F2F2F7"),
+		Ground:     ui.Hex("#F7F9FA"),
 		Surface:    ui.Hex("#FFFFFF"),
-		SurfaceHi:  ui.Hex("#E8E8ED"),
-		Ink:        ui.Hex("#1C1C1E"),
-		InkMuted:   ui.Hex("#6C6C70"),
-		Accent:     ui.Hex("#0A84FF"),
+		SurfaceHi:  ui.Hex("#ECF0F2"),
+		Ink:        ui.Hex("#1F3038"),
+		InkMuted:   ui.Hex("#5D6B72"),
+		Accent:     ui.Hex("#0D7480"),
 		AccentText: ui.Hex("#FFFFFF"),
-		Warning:    ui.Hex("#B25000"),
-		Danger:     ui.Hex("#D70015"),
-		Success:    ui.Hex("#1D7A3E"),
-		Hairline:   ui.Hex("#D1D1D6"),
+		Warning:    ui.Hex("#8A5A00"),
+		Danger:     ui.Hex("#A32020"),
+		Success:    ui.Hex("#1D6B45"),
+		Hairline:   ui.Hex("#D6DEE2"),
 	}
 }
 
-// dark is the night appearance.
+// dark is the night appearance, the same relationships on a dark ground.
 func dark() palette {
 	return palette{
-		Ground:     ui.Hex("#1C1C1E"),
-		Surface:    ui.Hex("#2C2C2E"),
-		SurfaceHi:  ui.Hex("#3A3A3C"),
-		Ink:        ui.Hex("#F2F2F7"),
-		InkMuted:   ui.Hex("#98989D"),
-		Accent:     ui.Hex("#0A84FF"),
-		AccentText: ui.Hex("#FFFFFF"),
-		Warning:    ui.Hex("#FF9F0A"),
-		Danger:     ui.Hex("#FF453A"),
-		Success:    ui.Hex("#30D158"),
-		Hairline:   ui.Hex("#3A3A3C"),
+		Ground:     ui.Hex("#14191C"),
+		Surface:    ui.Hex("#1E2529"),
+		SurfaceHi:  ui.Hex("#2A3338"),
+		Ink:        ui.Hex("#E8EEF1"),
+		InkMuted:   ui.Hex("#9AA8AE"),
+		Accent:     ui.Hex("#4FB3BE"),
+		AccentText: ui.Hex("#0B1113"),
+		Warning:    ui.Hex("#E0A94A"),
+		Danger:     ui.Hex("#E8756B"),
+		Success:    ui.Hex("#63C08D"),
+		Hairline:   ui.Hex("#33403F"),
 	}
 }
 
