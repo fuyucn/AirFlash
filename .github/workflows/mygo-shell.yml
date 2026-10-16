@@ -28,6 +28,21 @@ jobs:
           go-version: '1.27.x'
           cache: false
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the engine
+        shell: pwsh
+        run: ./scripts/build-native.ps1
+
+      - name: Put the engine in the shell's payload
+        shell: pwsh
+        run: |
+          $engine = 'native/airflash-engine/target/release/airflash-engine.exe'
+          if (-not (Test-Path $engine)) { throw "engine missing: $engine" }
+          Copy-Item $engine 'tools/mygo-shell/internal/enginebin/payload/airflash-engine.exe' -Force
+          Get-Item 'tools/mygo-shell/internal/enginebin/payload/airflash-engine.exe' |
+            Select-Object Name, Length
+
       - name: Test
         shell: pwsh
         working-directory: tools/mygo-shell
@@ -35,14 +50,14 @@ jobs:
           go vet ./...
           go test ./...
 
-      - name: Build
+      - name: Build the shell, one file with the engine inside
         shell: pwsh
         working-directory: tools/mygo-shell
         run: |
           go build -trimpath -ldflags "-s -w" -o ../../artifacts/shell/AirFlash.exe .
           Get-ChildItem ../../artifacts/shell
 
-      - name: Start-up report
+      - name: Start-up report, and prove the engine is inside
         shell: pwsh
         run: |
           $exe = 'artifacts/shell/AirFlash.exe'
@@ -51,6 +66,16 @@ jobs:
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'probe timed out' }
           if ($p.ExitCode -ne 0) { throw "probe exited $($p.ExitCode)" }
           Get-Content $report -Raw
+
+          $probe = Get-Content $report -Raw | ConvertFrom-Json
+          if (-not $probe.engine_bundled) { throw 'the engine was not embedded in the shell' }
+          if ($probe.engine_bytes -le 0) { throw 'the embedded engine is empty' }
+
+          # The engine has to come out of the shell's own binary, so nothing
+          # may sit beside it in the release directory.
+          $stray = Get-ChildItem artifacts/shell -Filter 'airflash-engine*' -ErrorAction SilentlyContinue
+          if ($stray) { throw "an engine was left beside the shell: $($stray.Name)" }
+          "engine bundled: $($probe.engine_bytes) bytes"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -123,5 +148,13 @@ jobs:
               --title 'mygo shell 0.1.0' \
               --notes 'The AirFlash shell in Go, for Windows and Linux. macOS is out of scope: macOS plays to a HomePod through AirPlay itself.'
           fi
+          # Only the two platform builds and the reports: the engine lives
+          # inside the Windows executable, not beside it.
           find artifacts -type f | sort
-          gh release upload "$tag" $(find artifacts -type f) --repo ${{ github.repository }} --clobber
+          gh release upload "$tag" \
+            artifacts/airflash-shell-win-x64/AirFlash.exe \
+            artifacts/airflash-shell-win-x64/probe-windows.json \
+            artifacts/airflash-shell-linux-x64/airflash-shell \
+            artifacts/airflash-shell-linux-x64/airflash-shell-linux-amd64.tar.gz \
+            artifacts/airflash-shell-linux-x64/probe-linux.json \
+            --repo ${{ github.repository }} --clobber
