@@ -1,8 +1,7 @@
 name: Latency probe
 
-# Builds the cross-language latency probes on a real Windows runner and reports
-# a baseline log from that clean machine. Rust builds with MSVC here, the same
-# toolchain the native engine uses.
+# Builds the cross-language latency probes plus both GUI stacks (mygo/Go and
+# WPF/C#) on a real Windows runner, then measures each one in the same way.
 on:
   workflow_dispatch:
     inputs:
@@ -69,7 +68,16 @@ jobs:
             -o ../../../artifacts/probe
           Pop-Location
 
-      - name: Build the mygo desktop app
+      - name: Build the WPF app
+        shell: pwsh
+        run: |
+          Push-Location tools/latency-probe/wpf
+          dotnet publish -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+            -o ../../../artifacts/probe
+          Pop-Location
+
+      - name: Build the mygo app
         shell: pwsh
         run: |
           Push-Location tools/latency-probe/mygo
@@ -79,23 +87,24 @@ jobs:
           Pop-Location
           Copy-Item 'tools/latency-probe/mygo/build/windows-amd64/AirFlash Probe.exe' 'artifacts/probe/AirFlash Probe.exe'
 
-      - name: Run every probe on this clean machine
+      - name: Run the command line probes
         shell: pwsh
         run: |
           $cores = [Environment]::ProcessorCount
           $log = 'artifacts/probe/baseline-log.txt'
           "=== latency probe baseline (GitHub Windows runner) ===" | Out-File $log
-          "cores: $cores" | Out-File $log -Append
+          "time : $(Get-Date -Format o)"      | Out-File $log -Append
+          "cores: $cores"                     | Out-File $log -Append
           "os   : $((Get-CimInstance Win32_OperatingSystem).Caption) $((Get-CimInstance Win32_OperatingSystem).Version)" | Out-File $log -Append
           "cpu  : $((Get-CimInstance Win32_Processor | Select-Object -First 1).Name)" | Out-File $log -Append
           "" | Out-File $log -Append
           foreach ($exe in 'probe-go.exe','probe-rust.exe','probe-csharp.exe') {
             "---------- $exe ----------" | Out-File $log -Append
             foreach ($case in @(
-                @{ n = 'idle';        a = @('-slots','1500') },
-                @{ n = 'idle+udp';    a = @('-slots','1500','-udp') },
-                @{ n = 'burn';        a = @('-slots','1000','-burn',"$cores") },
-                @{ n = 'burn+udp';    a = @('-slots','1000','-burn',"$cores",'-udp') }
+                @{ n = 'idle';     a = @('-slots','1500') },
+                @{ n = 'idle+udp'; a = @('-slots','1500','-udp') },
+                @{ n = 'burn';     a = @('-slots','1000','-burn',"$cores") },
+                @{ n = 'burn+udp'; a = @('-slots','1000','-burn',"$cores",'-udp') }
             )) {
               "--- $($case.n) ---" | Out-File $log -Append
               & "artifacts/probe/$exe" @($case.a) 2>&1 | Tee-Object -FilePath $log -Append
@@ -104,11 +113,45 @@ jobs:
           }
           Get-Content $log
 
+      # The GUI apps cannot be measured by the loop above: they own a window,
+      # a message loop and a renderer. Each writes a JSON report instead.
+      - name: Measure the GUI stacks
+        shell: pwsh
+        run: |
+          $cores = [Environment]::ProcessorCount
+          $log = 'artifacts/probe/baseline-log.txt'
+
+          function Measure-App($name, $exe, $report) {
+            "---------- $name ----------" | Out-File $log -Append
+            if (-not (Test-Path $exe)) {
+              "MISSING $exe" | Out-File $log -Append
+              return
+            }
+            $args = @('-auto', $report, '-slots', '800', '-burn', "$cores")
+            $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -ErrorAction Stop
+            if (-not $p.WaitForExit(180000)) {
+              $p.Kill()
+              "TIMEOUT after 180s" | Out-File $log -Append
+              return
+            }
+            "exit code: $($p.ExitCode)" | Out-File $log -Append
+            if (Test-Path $report) {
+              Get-Content $report -Raw | Out-File $log -Append
+            } else {
+              "NO REPORT WRITTEN - the app could not open a window on this runner" | Out-File $log -Append
+            }
+            "" | Out-File $log -Append
+          }
+
+          Measure-App 'mygo (Go) GUI, burn=all cores' 'artifacts/probe/AirFlash Probe.exe' 'artifacts/probe/report-mygo.json'
+          Measure-App 'WPF (C#) GUI, burn=all cores'   'artifacts/probe/WpfProbe.exe'       'artifacts/probe/report-wpf.json'
+          Get-Content $log | Select-Object -Last 60
+
       - name: Hash the binaries
         shell: pwsh
         run: |
           Get-ChildItem artifacts/probe -File |
-            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+            Where-Object { $_.Name -notin @('SHA256SUMS.txt') } |
             ForEach-Object {
               $h = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
               "$h  $($_.Name)"
@@ -127,11 +170,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'latency-probe-v0.1.0'
+          $tag = 'latency-probe-v0.2.0'
           gh release view $tag --repo ${{ github.repository }} 2>$null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --repo ${{ github.repository }} `
-              --title 'Latency probe 0.1.0' `
-              --notes 'Cross-language latency probes (Go, Rust, C#) plus a mygo desktop app, built on a Windows runner. See README.txt in the archive.'
+              --title 'Latency probe 0.2.0' `
+              --notes 'Cross-language latency probes and both GUI stacks (mygo/Go, WPF/C#), built and measured on a Windows runner. See baseline-log.txt.'
           }
           gh release upload $tag artifacts/probe/* --repo ${{ github.repository }} --clobber
