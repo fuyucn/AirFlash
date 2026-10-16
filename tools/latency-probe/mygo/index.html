@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AirFlash Probe</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>AirFlash Probe</h1>
+        <p class="muted">
+          Measures the send cadence (one packet every 7.98&nbsp;ms) inside this
+          app's own Go process, beside a live UI.
+        </p>
+      </header>
+
+      <section class="controls card">
+        <label>
+          Slots
+          <input id="slots" type="number" min="100" max="20000" step="100" value="1500" />
+        </label>
+        <label>
+          Competing goroutines
+          <input id="burn" type="number" min="0" max="64" step="1" value="0" />
+        </label>
+        <button id="run" type="button">Run</button>
+        <button id="stop" type="button" class="ghost">Stop</button>
+      </section>
+
+      <section class="stats">
+        <div class="stat"><span class="label">p50</span><strong id="p50">—</strong></div>
+        <div class="stat"><span class="label">p99</span><strong id="p99">—</strong></div>
+        <div class="stat"><span class="label">max</span><strong id="max">—</strong></div>
+        <div class="stat"><span class="label">late &gt; 1 slot</span><strong id="over">—</strong></div>
+      </section>
+
+      <section class="card chart-card">
+        <canvas id="chart" width="900" height="220"></canvas>
+        <p class="muted small"><span id="status">idle</span> · <span id="env"></span></p>
+      </section>
+
+      <p class="muted small">
+        A healthy run stays near zero. Values above 7.98&nbsp;ms mean a slot was
+        missed and the HomePod would hear a gap.
+      </p>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

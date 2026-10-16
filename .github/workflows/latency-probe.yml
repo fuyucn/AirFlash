@@ -1,0 +1,136 @@
+name: Latency probe
+
+# Builds the cross-language latency probes on a real Windows runner and reports
+# a baseline log from that clean machine. Rust builds with MSVC here, the same
+# toolchain the native engine uses.
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Also publish the binaries as a release'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Report toolchain
+        shell: pwsh
+        run: |
+          go version
+          rustc --version
+          dotnet --version
+          bun --version
+
+      - name: Build the Go probe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts/probe | Out-Null
+          Push-Location tools/latency-probe/go
+          go build -trimpath -ldflags "-s -w" -o ../../../artifacts/probe/probe-go.exe .
+          Pop-Location
+
+      - name: Build the Rust probe
+        shell: pwsh
+        run: |
+          Push-Location tools/latency-probe/rust
+          cargo build --release
+          Copy-Item target/release/probe-rust.exe ../../../artifacts/probe/probe-rust.exe
+          Pop-Location
+
+      - name: Publish the C# probe
+        shell: pwsh
+        run: |
+          Push-Location tools/latency-probe/csharp
+          dotnet publish -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true `
+            -o ../../../artifacts/probe
+          Pop-Location
+
+      - name: Build the mygo desktop app
+        shell: pwsh
+        run: |
+          Push-Location tools/latency-probe/mygo
+          bun install
+          go run github.com/egoist/mygo/cmd/mygo@latest build -platform windows/amd64
+          Pop-Location
+          Copy-Item 'tools/latency-probe/mygo/build/windows-amd64/AirFlash Probe.exe' 'artifacts/probe/AirFlash Probe.exe'
+
+      - name: Run every probe on this clean machine
+        shell: pwsh
+        run: |
+          $cores = [Environment]::ProcessorCount
+          $log = 'artifacts/probe/baseline-log.txt'
+          "=== latency probe baseline (GitHub Windows runner) ===" | Out-File $log
+          "cores: $cores" | Out-File $log -Append
+          "os   : $((Get-CimInstance Win32_OperatingSystem).Caption) $((Get-CimInstance Win32_OperatingSystem).Version)" | Out-File $log -Append
+          "cpu  : $((Get-CimInstance Win32_Processor | Select-Object -First 1).Name)" | Out-File $log -Append
+          "" | Out-File $log -Append
+          foreach ($exe in 'probe-go.exe','probe-rust.exe','probe-csharp.exe') {
+            "---------- $exe ----------" | Out-File $log -Append
+            foreach ($case in @(
+                @{ n = 'idle';        a = @('-slots','1500') },
+                @{ n = 'idle+udp';    a = @('-slots','1500','-udp') },
+                @{ n = 'burn';        a = @('-slots','1000','-burn',"$cores") },
+                @{ n = 'burn+udp';    a = @('-slots','1000','-burn',"$cores",'-udp') }
+            )) {
+              "--- $($case.n) ---" | Out-File $log -Append
+              & "artifacts/probe/$exe" @($case.a) 2>&1 | Tee-Object -FilePath $log -Append
+            }
+            "" | Out-File $log -Append
+          }
+          Get-Content $log
+
+      - name: Hash the binaries
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/probe -File |
+            Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+            ForEach-Object {
+              $h = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$h  $($_.Name)"
+            } | Set-Content -LiteralPath artifacts/probe/SHA256SUMS.txt -Encoding ascii
+          Get-Content artifacts/probe/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airflash-latency-probe-win-x64
+          path: artifacts/probe/
+          retention-days: 90
+
+      - name: Publish a release with the binaries
+        if: ${{ inputs.release }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'latency-probe-v0.1.0'
+          gh release view $tag --repo ${{ github.repository }} 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo ${{ github.repository }} `
+              --title 'Latency probe 0.1.0' `
+              --notes 'Cross-language latency probes (Go, Rust, C#) plus a mygo desktop app, built on a Windows runner. See README.txt in the archive.'
+          }
+          gh release upload $tag artifacts/probe/* --repo ${{ github.repository }} --clobber
