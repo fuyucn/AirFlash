@@ -77,7 +77,7 @@ jobs:
             -o ../../../artifacts/probe
           Pop-Location
 
-      - name: Build the mygo app
+      - name: Build the mygo app (webview UI)
         shell: pwsh
         run: |
           Push-Location tools/latency-probe/mygo
@@ -86,6 +86,14 @@ jobs:
           go run github.com/egoist/mygo/cmd/mygo@latest build -platform windows/amd64
           Pop-Location
           Copy-Item 'tools/latency-probe/mygo/build/windows-amd64/AirFlash Probe.exe' 'artifacts/probe/AirFlash Probe.exe'
+
+      - name: Build the mygo app (native UI, no webview)
+        shell: pwsh
+        run: |
+          Push-Location tools/latency-probe/mygo-native
+          go mod download
+          go build -trimpath -ldflags "-s -w" -o '../../../artifacts/probe/AirFlash Probe Native.exe' .
+          Pop-Location
 
       - name: Run the command line probes
         shell: pwsh
@@ -112,6 +120,25 @@ jobs:
             "" | Out-File $log -Append
           }
           Get-Content $log
+
+      # A single saturated point cannot say where a runtime stops holding the
+      # deadline. Sweep the load instead: idle, quarter, half, three quarters,
+      # and fully saturated.
+      - name: Sweep the load levels
+        shell: pwsh
+        run: |
+          $cores = [Environment]::ProcessorCount
+          $log = 'artifacts/probe/baseline-log.txt'
+          $levels = @(0, [int]($cores / 4), [int]($cores / 2), [int](3 * $cores / 4), $cores) | Select-Object -Unique
+          "" | Out-File $log -Append
+          "=== load sweep (cores: $cores, levels: $($levels -join ',')) ===" | Out-File $log -Append
+          foreach ($exe in 'probe-go.exe','probe-rust.exe','probe-csharp.exe') {
+            "---------- $exe ----------" | Out-File $log -Append
+            foreach ($b in $levels) {
+              & "artifacts/probe/$exe" -slots 800 -burn $b 2>&1 | Tee-Object -FilePath $log -Append
+            }
+            "" | Out-File $log -Append
+          }
 
       # The GUI apps cannot be measured by the loop above: they own a window,
       # a message loop and a renderer. Each writes a JSON report instead, and
@@ -164,15 +191,13 @@ jobs:
             if ($tree.Rows.Count -gt 0) { $tree.Rows | Out-File $log -Append } else { "    (no child processes)" | Out-File $log -Append }
             "  TREE TOTAL   : $([math]::Round(($root + $tree.Sum) / 1MB, 1)) MB" | Out-File $log -Append
 
-            # A webview's browser process can be parented elsewhere, so count
-            # any msedgewebview2 processes separately.
+            # WebView2 is shared infrastructure: report what THIS app added,
+            # not the runtime's absolute size.
             $edge = Get-Process -Name 'msedgewebview2' -ErrorAction SilentlyContinue
-            if ($edge) {
-              $edgeWs = ($edge | Measure-Object WorkingSet64 -Sum).Sum
-              "  msedgewebview2: $($edge.Count) procs, $([math]::Round($edgeWs / 1MB, 1)) MB" | Out-File $log -Append
-            } else {
-              "  msedgewebview2: none" | Out-File $log -Append
-            }
+            $now = if ($edge) { ($edge | Measure-Object WorkingSet64 -Sum).Sum } else { 0 }
+            $delta = $now - $before
+            "  webview2 now : $([math]::Round($now / 1MB, 1)) MB in $(@($edge).Count) procs" | Out-File $log -Append
+            "  webview2 added by this app: $([math]::Round($delta / 1MB, 1)) MB" | Out-File $log -Append
 
             if (-not $p.WaitForExit(180000)) {
               $p.Kill()
@@ -188,8 +213,19 @@ jobs:
             "" | Out-File $log -Append
           }
 
-          Measure-App 'mygo (Go) GUI, burn=all cores' 'artifacts/probe/AirFlash Probe.exe' 'artifacts/probe/report-mygo.json'
-          Measure-App 'WPF (C#) GUI, burn=all cores'   'artifacts/probe/WpfProbe.exe'       'artifacts/probe/report-wpf.json'
+          # WebView2 ships with Windows 11 and is present on the vast majority
+          # of Windows 10 machines, and several apps share one runtime. What
+          # matters for a fair comparison is therefore the MARGINAL cost the
+          # app adds, not the runtime's absolute size.
+          $before = (Get-Process -Name 'msedgewebview2' -ErrorAction SilentlyContinue |
+                     Measure-Object WorkingSet64 -Sum).Sum
+          if (-not $before) { $before = 0 }
+          "=== WebView2 already running before the apps: $([math]::Round($before / 1MB, 1)) MB ===" | Out-File $log -Append
+          "" | Out-File $log -Append
+
+          Measure-App 'mygo (Go) GUI, webview UI, burn=all cores' 'artifacts/probe/AirFlash Probe.exe'        'artifacts/probe/report-mygo.json'
+          Measure-App 'mygo (Go) GUI, native UI,  burn=all cores' 'artifacts/probe/AirFlash Probe Native.exe' 'artifacts/probe/report-mygo-native.json'
+          Measure-App 'WPF (C#) GUI, burn=all cores'              'artifacts/probe/WpfProbe.exe'              'artifacts/probe/report-wpf.json'
           "=== GUI section ===" | Out-File $log -Append
           Get-Content $log | Select-Object -Last 70
 
