@@ -11,21 +11,23 @@
       <header>
         <h1>AirFlash Probe</h1>
         <p class="muted">
-          Measures the send cadence (one packet every 7.98&nbsp;ms) inside this
-          app's own Go process, beside a live UI.
+          Runs the engine's send cadence (one packet every 7.98&nbsp;ms) inside
+          this app's own Go process, beside a live UI.
         </p>
+        <p class="muted small" id="env"></p>
       </header>
 
       <section class="controls card">
         <label>
-          Slots
-          <input id="slots" type="number" min="100" max="20000" step="100" value="1500" />
+          Slots per level
+          <input id="slots" type="number" min="200" max="20000" step="100" value="800" />
         </label>
         <label>
           Competing goroutines
-          <input id="burn" type="number" min="0" max="64" step="1" value="0" />
+          <input id="burn" type="number" min="0" max="128" step="1" value="0" />
         </label>
-        <button id="run" type="button">Run</button>
+        <button id="run" type="button">Run once</button>
+        <button id="sweep" type="button" class="primary">Sweep all loads</button>
         <button id="stop" type="button" class="ghost">Stop</button>
       </section>
 
@@ -37,8 +39,25 @@
       </section>
 
       <section class="card chart-card">
-        <canvas id="chart" width="900" height="220"></canvas>
-        <p class="muted small"><span id="status">idle</span> · <span id="env"></span></p>
+        <canvas id="chart" width="940" height="220"></canvas>
+        <p class="muted small"><span id="status">idle</span></p>
+      </section>
+
+      <section class="card" id="sweep-card" hidden>
+        <h2>Sweep</h2>
+        <table id="sweep-table">
+          <thead>
+            <tr>
+              <th>Load</th><th>p50</th><th>p95</th><th>p99</th><th>max</th>
+              <th>late &gt; 1 slot</th><th>stalls &gt; 20 ms</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="muted small">
+          "Load" is how many goroutines compete for the CPU. The last row is one
+          per core, which saturates the machine.
+        </p>
       </section>
 
       <p class="muted small">

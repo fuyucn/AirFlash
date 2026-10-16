@@ -7,6 +7,7 @@ import { call, event } from "mygo-runtime";
 /** Progress is streamed to the page while a run is in flight. */
 export interface Progress {
   running: boolean;
+  phase: string;
   done: number;
   total: number;
   latest: number;
@@ -33,21 +34,54 @@ export interface Summary {
   done: boolean;
 }
 
+/** SweepReport carries the load sweep as it fills in. */
+export interface SweepReport {
+  running: boolean;
+  done: boolean;
+  cores: number;
+  gomaxprocs: number;
+  slots: number;
+  active: number;
+  rows: SweepRow[];
+}
+
+/** SweepRow is one load level of a sweep. */
+export interface SweepRow {
+  burn: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  max: number;
+  overPct: number;
+  stalls: number;
+}
+
 // ---- Services ----
 
 /** Probe is the service the page drives. */
 export const Probe = {
-  /** Run starts a measurement beside the live UI and returns at once. */
+  /** Environment reports the machine the probe is running on. */
+  environment(): Promise<Summary> {
+    return call("Probe.Environment");
+  },
+  /** Run starts one measurement and returns at once. */
   run(slots: number, burn: number): Promise<string> {
     return call("Probe.Run", slots, burn);
   },
-  /** Stop ends the run early. */
+  /** Stop ends the current run early. */
   stop(): Promise<string> {
     return call("Probe.Stop");
   },
-  /** Summary returns the last finished run. */
+  /** Summary returns the last finished single run. */
   summary(): Promise<Summary> {
     return call("Probe.Summary");
+  },
+  /**
+   * Sweep measures the same loop at rising fractions of the core count, which is
+   * what shows where a runtime stops holding the 7.98 ms deadline.
+   */
+  sweep(slots: number): Promise<string> {
+    return call("Probe.Sweep", slots);
   },
 } as const;
 
@@ -57,4 +91,6 @@ export const Probe = {
 export const events = {
   /** ProgressEvent carries live samples; the page subscribes with events.progress. */
   progress: event<Progress>("progress"),
+  /** SweepEvent reports each finished load level. */
+  sweep: event<SweepReport>("sweep"),
 } as const;

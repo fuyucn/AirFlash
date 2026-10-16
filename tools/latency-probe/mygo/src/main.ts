@@ -1,5 +1,5 @@
-// Probe and events are generated from the Go code by `mygo generate`.
-import { Probe, events } from "./mygo";
+// Probe, SweepRow and events are generated from the Go code by `mygo generate`.
+import { Probe, events, type SweepRow } from "./mygo";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -7,12 +7,35 @@ const SLOT_MS = 7.98;
 const series: number[] = [];
 const MAX_POINTS = 600;
 
-const fmt = (v: number) => (v === undefined || v === null ? "—" : `${v.toFixed(3)} ms`);
+const fmt = (v: number) => (v === undefined || v === null ? "—" : `${v.toFixed(3)}`);
+const fmtMs = (v: number) => (v === undefined || v === null ? "—" : `${v.toFixed(3)} ms`);
 
 function setStat(id: string, value: number, bad: boolean) {
   const el = $(`#${id}`);
-  el.textContent = fmt(value);
+  el.textContent = fmtMs(value);
   el.closest(".stat")?.classList.toggle("bad", bad);
+}
+
+function renderRows(rows: SweepRow[], active?: number) {
+  const card = $("#sweep-card");
+  card.hidden = rows.length === 0;
+  const tbody = card.querySelector("tbody")!;
+  tbody.innerHTML = "";
+
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    if (active !== undefined && r.burn === active) tr.classList.add("active");
+    const bad = r.overPct > 0;
+    tr.innerHTML =
+      `<td>${r.burn} / core${r.burn === 1 ? "" : "s"}</td>` +
+      `<td>${fmt(r.p50)}</td>` +
+      `<td>${fmt(r.p95)}</td>` +
+      `<td>${fmt(r.p99)}</td>` +
+      `<td>${fmt(r.max)}</td>` +
+      `<td class="${bad ? "bad" : ""}">${r.overPct.toFixed(1)}%</td>` +
+      `<td>${r.stalls}</td>`;
+    tbody.appendChild(tr);
+  }
 }
 
 function draw() {
@@ -25,7 +48,6 @@ function draw() {
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  // Scale so the 7.98 ms deadline sits at 60% height; anything above it is a miss.
   const ceiling = Math.max(SLOT_MS * 1.6, ...series, SLOT_MS);
   const y = (v: number) => h - (v / ceiling) * h;
 
@@ -59,34 +81,36 @@ function draw() {
   });
   ctx.stroke();
 
-  // Missed slots, drawn heavy so they are impossible to miss.
   ctx.fillStyle = dark ? "#f87171" : "#dc2626";
   series.forEach((v, i) => {
     if (v > SLOT_MS) ctx.fillRect(i * step - 1.5, y(v), 3, Math.max(3, slotY - y(v)));
   });
 }
 
-async function refreshSummary() {
-  const s = await Probe.summary();
-  if (!s.done) return;
-  $("#status").textContent =
-    `${s.mode} · ${s.slots} slots · ${s.burn} burners · p50 ${s.p50.toFixed(3)} · ` +
-    `p99 ${s.p99.toFixed(3)} · max ${s.max.toFixed(3)} ms · ` +
-    `${s.overPct.toFixed(1)}% late · ${s.stalls} stalls > 20 ms`;
+async function showEnv() {
+  const e = await Probe.environment();
+  $("#env").textContent =
+    `${e.cpus} logical CPUs · GOMAXPROCS ${e.gomaxprocs} · ${e.mode}`;
 }
 
 $("#run").addEventListener("click", async () => {
   const slots = Number($<HTMLInputElement>("#slots").value) || 1500;
   const burn = Number($<HTMLInputElement>("#burn").value) || 0;
   series.length = 0;
+  renderRows([]);
   $("#status").textContent = "running…";
-  const msg = await Probe.run(slots, burn);
-  $("#status").textContent = msg;
+  $("#status").textContent = await Probe.run(slots, burn);
+});
+
+$("#sweep").addEventListener("click", async () => {
+  const slots = Number($<HTMLInputElement>("#slots").value) || 800;
+  series.length = 0;
+  renderRows([]);
+  $("#status").textContent = await Probe.sweep(slots);
 });
 
 $("#stop").addEventListener("click", async () => {
   await Probe.stop();
-  await refreshSummary();
 });
 
 events.progress.on((p) => {
@@ -98,11 +122,21 @@ events.progress.on((p) => {
   setStat("p99", p.p99, p.p99 > SLOT_MS);
   setStat("max", p.max, p.max > SLOT_MS);
   $("#over").textContent = `${p.overPct.toFixed(1)}%`;
-  if (!p.running) {
-    $("#status").textContent = `done · ${p.done}/${p.total} slots · ${p.elapsed.toFixed(1)} s`;
-    void refreshSummary();
-  }
+  $("#status").textContent = p.running
+    ? `${p.phase} · ${p.done}/${p.total} slots · ${p.elapsed.toFixed(1)} s`
+    : `${p.phase} done · ${p.p50.toFixed(3)} / ${p.p99.toFixed(3)} / ${p.max.toFixed(3)} ms · ${p.overPct.toFixed(1)}% late`;
   draw();
 });
 
+events.sweep.on((s) => {
+  renderRows(s.rows, s.active);
+  if (s.done) {
+    const worst = s.rows[s.rows.length - 1];
+    $("#status").textContent = `sweep complete on ${s.cores} cores · worst level ${worst?.burn ?? 0} at ${worst?.overPct.toFixed(1) ?? "0"}% late`;
+  } else {
+    $("#status").textContent = `sweeping… level burn=${s.active} on ${s.cores} cores`;
+  }
+});
+
 draw();
+void showEnv();

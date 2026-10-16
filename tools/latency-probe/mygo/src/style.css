@@ -104,3 +104,42 @@ button.ghost {
   height: auto;
   display: block;
 }
+
+h2 {
+  font-size: 1rem;
+  margin: 0 0 0.75rem;
+}
+button.primary {
+  background: #059669;
+  border-color: #059669;
+}
+#sweep-card table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+#sweep-card th,
+#sweep-card td {
+  text-align: right;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--muted) 25%, transparent);
+}
+#sweep-card th:first-child,
+#sweep-card td:first-child {
+  text-align: left;
+}
+#sweep-card thead th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+#sweep-card tr.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+td.bad {
+  color: var(--bad);
+  font-weight: 600;
+}
