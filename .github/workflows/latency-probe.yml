@@ -123,23 +123,29 @@ jobs:
           $cores = [Environment]::ProcessorCount
           $log = 'artifacts/probe/baseline-log.txt'
 
+          # The queue must be indexed, not re-sliced: in PowerShell 1..0 is the
+          # descending range @(1, 0), so a slice-based pop on a one-element queue
+          # re-adds the element forever.
           function Get-TreeRss($rootPid) {
             $all = Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,WorkingSetSize
-            $sum = 0L; $count = 0; $rows = @()
-            $queue = @($rootPid); $seen = @{}
-            while ($queue.Count -gt 0) {
-              $cur = $queue[0]
-              $queue = @($queue[1..($queue.Count - 1)])
+            $sum = 0L
+            $count = 0
+            $rows = @()
+            $todo = [System.Collections.Generic.Queue[int]]::new()
+            $todo.Enqueue([int]$rootPid)
+            $seen = @{}
+            while ($todo.Count -gt 0) {
+              $cur = $todo.Dequeue()
               if ($seen.ContainsKey($cur)) { continue }
               $seen[$cur] = $true
               foreach ($c in $all | Where-Object { $_.ParentProcessId -eq $cur }) {
                 $sum += $c.WorkingSetSize
                 $count++
-                $rows += "    child $($c.Name) ws=$([math]::Round($c.WorkingSetSize / 1MB, 1)) MB"
-                $queue += $c.ProcessId
+                $rows += "    child $($c.Name) pid=$($c.ProcessId) ws=$([math]::Round($c.WorkingSetSize / 1MB, 1)) MB"
+                $todo.Enqueue([int]$c.ProcessId)
               }
             }
-            return @{ Sum = $sum; Count = $count; Rows = $rows }
+            return [pscustomobject]@{ Sum = $sum; Count = $count; Rows = $rows }
           }
 
           function Measure-App($name, $exe, $report) {
