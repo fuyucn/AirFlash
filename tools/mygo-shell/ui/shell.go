@@ -738,8 +738,8 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 						}
 					})
 					detail := rec.Address
-					if rec.Model != "" {
-						detail = rec.Model + " · " + rec.Address
+					if name := discovery.DisplayModel(rec.Model); name != "" {
+						detail = name + " · " + rec.Address
 					}
 					if rec.IsGroup() {
 						detail = fmt.Sprintf("stereo · %d/2 · %s", len(rec.Members), detail)

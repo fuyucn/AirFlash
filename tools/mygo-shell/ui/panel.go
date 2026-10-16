@@ -232,6 +232,10 @@ func (p *Panel) volumeRow(c *ui.Context, pal palette, rec discovery.Receiver) {
 
 // reading is the current latency, kept to one line so the panel stays a panel.
 // The full picture is in the main window.
+//
+// Before there is a reading, the line reports where the connection got to.
+// "no reading yet" says nothing, and a user waiting on a speaker that is
+// refusing the session has no way to tell that from one that is merely slow.
 func (p *Panel) reading(c *ui.Context, pal palette, cfg settings.Settings, st engine.Metrics) {
 	target := targetMs(cfg, st)
 
@@ -245,13 +249,46 @@ func (p *Panel) reading(c *ui.Context, pal palette, cfg settings.Settings, st en
 			})
 			ui.Spacer(c).Grow(1)
 			ui.Text(c, band.Label).FontSize(sizeSmall).TextColor(band.Color)
-		} else {
-			ui.Text(c, fmt.Sprintf("TARGET %d MS", int(target))).
-				FontSize(sizeSmall).TextColor(pal.InkMuted)
-			ui.Spacer(c).Grow(1)
-			ui.Text(c, "no reading yet").FontSize(sizeSmall).TextColor(pal.InkMuted)
+			return
 		}
+
+		ui.Text(c, fmt.Sprintf("TARGET %d MS", int(target))).
+			FontSize(sizeSmall).TextColor(pal.InkMuted)
+		ui.Spacer(c).Grow(1)
+		ui.Text(c, phaseNote(st)).FontSize(sizeSmall).TextColor(phaseNoteColor(pal, st))
 	})
+}
+
+// phaseNote is what the engine is doing, in words a user recognises. The engine
+// reports its own phase names, which are its internals: "negotiating" and
+// "handshake_complete" are not something to show a person waiting for music.
+func phaseNote(st engine.Metrics) string {
+	switch st.Phase {
+	case engine.PhaseConnecting, engine.PhaseNegotiating:
+		return "connecting…"
+	case engine.PhaseFailed:
+		// The engine's error text is the one thing that says why, and it is
+		// usually the most useful line on the panel.
+		if st.Detail != "" {
+			return st.Detail
+		}
+		return "could not connect"
+	case engine.PhaseStopped:
+		return "stopped"
+	default:
+		return "no reading yet"
+	}
+}
+
+func phaseNoteColor(p palette, st engine.Metrics) ui.Color {
+	switch st.Phase {
+	case engine.PhaseConnecting, engine.PhaseNegotiating:
+		return p.Warning
+	case engine.PhaseFailed:
+		return p.Danger
+	default:
+		return p.InkMuted
+	}
 }
 
 // footer is the way to the window, and the way out.
@@ -273,8 +310,10 @@ func (p *Panel) footer(c *ui.Context, pal palette) {
 // recDetail is the second line of a receiver: what it is and where it is.
 func recDetail(rec discovery.Receiver) string {
 	detail := rec.Address
-	if rec.Model != "" {
-		detail = rec.Model + " · " + rec.Address
+	if name := discovery.DisplayModel(rec.Model); name != "" {
+		// The product name, not the internal code: "HomePod" is what the user
+		// picked, "AudioAccessory1,1" is what Apple calls it internally.
+		detail = name + " · " + rec.Address
 	}
 	if rec.IsGroup() {
 		detail = fmt.Sprintf("stereo %d/2 · %s", len(rec.Members), detail)

@@ -289,6 +289,53 @@ func endpoint(rec Record) string {
 	return rec.Address + ":" + strconv.Itoa(rec.Port)
 }
 
+// DisplayModel turns a receiver's internal model code into its product name.
+//
+// A HomePod advertises "AudioAccessory1,1" and an Apple TV "AppleTV14,1". Those
+// are Apple's internal identifiers: they say what something is to Apple, and
+// nothing to the person looking at a list of receivers. The panel shows the
+// product name instead, because "HomePod" is the thing the user picked.
+//
+// The mapping follows pyatv's, which is what HomePodCast resolves device names
+// through, so the shell and that app call the same hardware by the same name.
+// A code that is not in the table is returned unchanged: an unknown model is
+// better shown as itself than guessed at.
+func DisplayModel(code string) string {
+	if code == "" {
+		return ""
+	}
+	if name, ok := modelNames[code]; ok {
+		return name
+	}
+	return code
+}
+
+// modelNames is the internal code to product name table. The names are pyatv's,
+// so the shell and HomePodCast call the same hardware by the same thing.
+var modelNames = map[string]string{
+	// HomePods. The user is on a first-generation one, which reports
+	// AudioAccessory1,1.
+	"AudioAccessory1,1":       "HomePod",
+	"AudioAccessory1,2":       "HomePod",
+	"AudioAccessory6,1":       "HomePod",
+	"AudioAccessory5,1":       "HomePod mini",
+	"AudioAccessorySingle5,1": "HomePod mini",
+
+	// Apple TVs.
+	"AppleTV1,1":  "Apple TV 2",
+	"AppleTV2,1":  "Apple TV 3",
+	"AppleTV3,1":  "Apple TV 4",
+	"AppleTV3,2":  "Apple TV 4",
+	"AppleTV5,3":  "Apple TV 4K",
+	"AppleTV6,2":  "Apple TV 4K",
+	"AppleTV11,1": "Apple TV 4K",
+	"AppleTV14,1": "Apple TV 4K",
+
+	// AirPort Express, which speaks AirPlay and is still worth playing to.
+	"AirPort4,107":  "AirPort Express",
+	"AirPort10,115": "AirPort Express",
+}
+
 // BrowseKey is the key one record is stored under while browsing. Presence is
 // judged by it, so the browse and the folding must both use this and nothing
 // else.

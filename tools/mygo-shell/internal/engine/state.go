@@ -76,6 +76,11 @@ type Metrics struct {
 	// shows the network, and this shows the audio.
 	Slots []Slot
 
+	// Model is what the receiver said it is, once it has answered. It comes from
+	// the same /info the engine already asks, and it is shown so the user can
+	// tell that the device answering is the one they meant.
+	Model string
+
 	// SessionPeakRTTMs and rttSamples describe the round trip over the whole
 	// session. The peak is what a gap has to fit inside; the spread says
 	// whether the link is slow or erratic.
@@ -255,7 +260,19 @@ func (s *State) Apply(ev Event) {
 			s.metrics.ClockID = st.ClockID
 			s.metrics.Detail = "streaming"
 		}
-	case "negotiated", "handshake_complete", "peer_info":
+	case "peer_info":
+		// The receiver's own description of itself, from the /info the engine
+		// already asks before authenticating. It is kept rather than dropped,
+		// because it is the one thing that says the device answering is the
+		// HomePod the user picked.
+		var info struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(ev.Raw, &info) == nil && info.Model != "" {
+			s.metrics.Model = info.Model
+		}
+		s.metrics.Phase = PhaseNegotiating
+	case "negotiated", "handshake_complete":
 		s.metrics.Phase = PhaseNegotiating
 	case "transport_metrics":
 		var tm TransportMetrics

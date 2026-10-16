@@ -300,3 +300,37 @@ func TestPresenceIsJudgedOnTheKeysTheFoldRecorded(t *testing.T) {
 			folded[0].RecordKeys[0], BrowseKey(records[0]))
 	}
 }
+
+func TestDisplayModelNamesAHomePod(t *testing.T) {
+	// A first-generation HomePod, which is what the user has, reports
+	// AudioAccessory1,1. Showing that string is showing Apple's internal code,
+	// not the thing on the shelf.
+	if got := DisplayModel("AudioAccessory1,1"); got != "HomePod" {
+		t.Errorf("DisplayModel(AudioAccessory1,1) = %q, want %q", got, "HomePod")
+	}
+	for code, want := range map[string]string{
+		"AudioAccessory1,2":       "HomePod",
+		"AudioAccessory6,1":       "HomePod",
+		"AudioAccessory5,1":       "HomePod mini",
+		"AudioAccessorySingle5,1": "HomePod mini",
+		"AppleTV14,1":             "Apple TV 4K",
+		"AirPort4,107":            "AirPort Express",
+	} {
+		if got := DisplayModel(code); got != want {
+			t.Errorf("DisplayModel(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
+func TestDisplayModelLeavesWhatItDoesNotKnowAlone(t *testing.T) {
+	// An unknown model is shown as itself rather than guessed at, so a device
+	// released from now on still identifies itself.
+	for _, code := range []string{"SomeFutureModel9,9", "Mac17,2", "iPad14,1"} {
+		if got := DisplayModel(code); got != code {
+			t.Errorf("DisplayModel(%q) = %q, want the code unchanged", code, got)
+		}
+	}
+	if got := DisplayModel(""); got != "" {
+		t.Errorf("no code = %q, want nothing", got)
+	}
+}
