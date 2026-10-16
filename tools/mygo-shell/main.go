@@ -76,7 +76,6 @@ type App struct {
 	// closes it on the main thread.
 	flyout atomic.Pointer[mygo.Window]
 
-	peers     atomic.Pointer[[]engine.Peer]
 	receivers atomic.Pointer[[]discovery.Receiver]
 	// playing is the receiver playback is going to, or "". The engine streams
 	// to hosts, so the receiver those hosts belong to is the shell's own fact.
@@ -174,15 +173,13 @@ func (a *App) openWindow(page string) {
 		return
 	}
 	view := appui.New(appui.Deps{
-		State:     a.state,
-		Settings:  a.settings,
-		Life:      a.life,
-		Peers:     a.currentPeers,
-		Receivers: a.Receivers,
-		PlayingID: a.PlayingID,
-		OnPlay:    a.playReceiver,
-		OnStart:   a.startStream,
-		OnStop:    a.stopStream,
+		State:           a.state,
+		Settings:        a.settings,
+		Life:            a.life,
+		Receivers:       a.Receivers,
+		PlayingReceiver: a.PlayingReceiver,
+		OnPlay:          a.playReceiver,
+		OnStop:          a.stopStream,
 		OnGain: func(g float64) {
 			a.settings.Update(func(s *settings.Settings) { s.Gain = g })
 			if c := a.client.Load(); c != nil {
@@ -350,7 +347,6 @@ func (a *App) panelView() *appui.Panel {
 		State:     a.state,
 		Settings:  a.settings,
 		Life:      a.life,
-		Peers:     a.currentPeers,
 		Receivers: a.Receivers,
 		OnPlay:    a.playReceiver,
 		OnStop:    a.stopStream,
@@ -388,19 +384,6 @@ func (a *App) startDiscovery() {
 	go func() {
 		err := discovery.Browse(ctx, func(found []discovery.Receiver) {
 			a.receivers.Store(&found)
-
-			// Keep the engine's peer list in step, so Play works from the
-			// window without another lookup.
-			var peers []engine.Peer
-			for _, r := range found {
-				if !r.Complete() {
-					continue
-				}
-				for _, m := range r.Peers() {
-					peers = append(peers, engine.Peer{Host: m.Address, Port: m.Port})
-				}
-			}
-			a.peers.Store(&peers)
 
 			if w := a.win.Load(); w != nil {
 				w.Invalidate()
@@ -446,17 +429,23 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	a.startStreamTo(peers)
 }
 
-// PlayingID returns the receiver playback is going to, or "".
-func (a *App) PlayingID() string {
+// PlayingReceiver returns the receiver playback is going to, or nil.
+//
+// The engine is told hosts, not a receiver, so this is the shell's own record
+// of the choice the user made. It is what the window's action operates on and
+// what the volume slider is shown for.
+func (a *App) PlayingReceiver() *discovery.Receiver {
 	if id := a.playing.Load(); id != nil {
-		return *id
+		for _, r := range a.Receivers() {
+			if r.ID == *id {
+				// Go 1.22 gives each loop iteration its own variable, so the
+				// copy outlives the loop that made it.
+				found := r
+				return &found
+			}
+		}
 	}
-	return ""
-}
-
-// startStream begins playback on a receiver, starting the engine if needed.
-func (a *App) startStream(peer engine.Peer) {
-	a.startStreamTo([]engine.Peer{peer})
+	return nil
 }
 
 // startStreamTo starts the engine if needed and begins playback to the peers.
@@ -501,23 +490,6 @@ func (a *App) stopStream() {
 	a.playing.Store(nil)
 	// The session is over, so what it showed about the network is now known.
 	a.recordSession()
-}
-
-func (a *App) currentPeers() []engine.Peer {
-	if p := a.peers.Load(); p != nil {
-		return *p
-	}
-	// Until discovery is wired to the engine, fall back to the receiver the
-	// user last played to.
-	if host := a.settings.Current().LastPeer; host != "" {
-		return []engine.Peer{{Host: host, Port: 7000}}
-	}
-	return nil
-}
-
-// SetPeers lets a discovery loop publish what it found.
-func (a *App) SetPeers(p []engine.Peer) {
-	a.peers.Store(&p)
 }
 
 // Probe is the start-up report CI reads.

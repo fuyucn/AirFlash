@@ -138,8 +138,10 @@ func (p *Panel) receivers(c *ui.Context, pal palette, st engine.Metrics) {
 	// ones being sent to.
 	playing := st.Phase == engine.PhaseStreaming
 	playingID := ""
-	if playing && p.deps.PlayingID != nil {
-		playingID = p.deps.PlayingID()
+	if playing {
+		if rec := p.deps.PlayingReceiver(); rec != nil {
+			playingID = rec.ID
+		}
 	}
 
 	ui.Column(c).FillWidth().Gap(0).Children(func() {
@@ -161,12 +163,22 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 		// The playing row is the one block that steps out of the page, so the
 		// eye finds it without the accent spending itself on a fill.
 		row.Background(pal.SurfaceHi)
+	} else if !rec.Online {
+		// A receiver that stopped answering is still listed, because the user
+		// may want to see that it is the one that went, not have it vanish.
+		row.Background(pal.Surface)
 	}
 
 	row.Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 			ui.Column(c).Grow(1).Shrink(1).Gap(2).Children(func() {
-				ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(pal.Ink).
+				// An offline receiver's name steps back to the muted ink: it is
+				// there, but it is not something to play to.
+				nameInk := pal.Ink
+				if !rec.Online {
+					nameInk = pal.InkMuted
+				}
+				ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk).
 					Ellipsis("…").SingleLine()
 				ui.Text(c, recDetail(rec)).FontSize(sizeSmall).TextColor(pal.InkMuted).
 					Ellipsis("…").SingleLine()
@@ -177,6 +189,10 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 				// Half a stereo pair cannot be played to, so it says so
 				// instead of offering a control that would sound wrong.
 				ui.Text(c, "pair incomplete").FontSize(sizeSmall).TextColor(pal.Warning)
+			case !rec.Online && !playing:
+				// An offline receiver cannot be played to, so it says so rather
+				// than offering a Play that would time out.
+				ui.Text(c, "offline").FontSize(sizeSmall).TextColor(pal.InkMuted)
 			case playing:
 				if ui.Button(c, "Stop").Clicked() && p.deps.OnStop != nil {
 					p.deps.OnStop()

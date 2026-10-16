@@ -67,13 +67,30 @@ jobs:
         shell: pwsh
         working-directory: tools/mygo-shell
         run: |
-          go build -trimpath -ldflags "-s -w" -o ../../artifacts/shell/AirFlash.exe .
+          # -H=windowsgui links a GUI subsystem, so launching the shell does
+          # not open a console window behind it. This is the same flag mygo's
+          # own build passes on Windows.
+          go build -trimpath -ldflags "-s -w -H=windowsgui" -o ../../artifacts/shell/AirFlash.exe .
           Get-ChildItem ../../artifacts/shell
 
       - name: Start-up report, and prove the engine is inside
         shell: pwsh
         run: |
           $exe = 'artifacts/shell/AirFlash.exe'
+          # A console subsystem would open a black window on every launch,
+          # which is what a tray app must never do.
+          $subsystem = (& dumpbin /headers $exe 2>$null | Select-String 'subsystem').Line
+          if (-not $subsystem) {
+            # dumpbin is not on the runner by default; read the PE header.
+            $bytes = [IO.File]::ReadAllBytes((Resolve-Path $exe))
+            $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+            $subsystem = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
+          }
+          if ([int]$subsystem -ne 2) {
+            throw "the shell is linked as a console app (subsystem $subsystem), not a GUI app: it would open a black window"
+          }
+          "subsystem: $subsystem (2 = Windows GUI)"
+
           $report = [IO.Path]::GetFullPath('artifacts/shell/probe-windows.json')
           $p = Start-Process -FilePath $exe -ArgumentList @('-probe', $report) -PassThru -WindowStyle Hidden
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'probe timed out' }

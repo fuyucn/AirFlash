@@ -47,6 +47,9 @@ func main() {
 		{Instance: "7E5B712836F4@Living Room (2)", Type: discovery.ServiceRAOP, Address: "10.0.10.30", Port: 7000,
 			TXT: map[string]string{"deviceid": "7E5B712836F4", "cn": "0,1", "am": "AppleTV14,1"}},
 	})
+	// One of them has stopped answering, which the panel has to show rather
+	// than offer a Play that would time out.
+	receivers[len(receivers)-1].Online = false
 	fmt.Fprintf(os.Stderr, "receivers: %d\n", len(receivers))
 
 	for _, state := range []struct {
@@ -68,10 +71,21 @@ func main() {
 			Settings:  cfg,
 			Life:      shell.New(),
 			Receivers: func() []discovery.Receiver { return receivers },
-			PlayingID: func() string { return playingID },
-			OnPlay:    func(r discovery.Receiver) {},
-			OnStop:    func() {},
-			OnQuit:    func() {},
+			PlayingReceiver: func() *discovery.Receiver {
+				if playingID == "" {
+					return nil
+				}
+				for _, r := range receivers {
+					if r.ID == playingID {
+						found := r
+						return &found
+					}
+				}
+				return nil
+			},
+			OnPlay: func(r discovery.Receiver) {},
+			OnStop: func() {},
+			OnQuit: func() {},
 		})
 		// The panel is a flyout: the platform draws the surface, so the shot is
 		// only as tall as the content asks for.

@@ -38,6 +38,10 @@ func Browse(ctx context.Context, onChange func([]Receiver), onError func(error))
 	// One collector per service type feeds the same set of records.
 	var mu sync.Mutex
 	seen := map[string]Record{}
+	// lastSeen is when each record was last announced. mDNS has no "a record
+	// went away" event, so this is how a device that stopped answering is told
+	// apart from one that is still there.
+	lastSeen := map[string]time.Time{}
 	var settle *time.Timer
 
 	publish := func() {
@@ -46,9 +50,14 @@ func Browse(ctx context.Context, onChange func([]Receiver), onError func(error))
 		for _, r := range seen {
 			list = append(list, r)
 		}
+		seenAt := make(map[string]time.Time, len(lastSeen))
+		for k, v := range lastSeen {
+			seenAt[k] = v
+		}
 		mu.Unlock()
 
 		folded := Fold(list)
+		markPresence(folded, seenAt, time.Now())
 		if onChange != nil {
 			onChange(folded)
 		}
@@ -82,7 +91,9 @@ func Browse(ctx context.Context, onChange func([]Receiver), onError func(error))
 					continue
 				}
 				mu.Lock()
-				seen[rec.Type+"|"+rec.Instance+"|"+rec.Address] = rec
+				key := BrowseKey(rec)
+				seen[key] = rec
+				lastSeen[key] = time.Now()
 				mu.Unlock()
 				schedule()
 			}
@@ -176,4 +187,38 @@ func serviceTypeOf(name string) string {
 		return ServiceRAOP
 	}
 	return ServiceAirPlay
+}
+
+// PresenceTimeout is how long a receiver may be silent before it is reported as
+// gone.
+//
+// mDNS answers are on demand, not a heartbeat: the browse re-queries every
+// second and a device that is present answers, so several missed rounds means
+// the device has gone rather than that it was busy. It is generous enough to
+// survive a busy Wi-Fi channel, because reporting a speaker that is really
+// still there as gone is worse than being a second late.
+const PresenceTimeout = 12 * time.Second
+
+// markPresence sets each receiver's Online flag from when its records were last
+// announced.
+//
+// A receiver is present when any of the records it was folded from was
+// announced within PresenceTimeout. A device answers on whichever service type
+// answers first, so requiring every record would call a speaker gone because
+// one of its two adverts missed a round.
+//
+// The keys are the ones the fold recorded, rather than rebuilt: the browse's key
+// carries the instance name, so a rebuild from the address alone produces
+// "_airplay._tcp||10.0.10.31" and matches nothing, which would make every
+// receiver read as offline.
+func markPresence(receivers []Receiver, seenAt map[string]time.Time, now time.Time) {
+	for i := range receivers {
+		receivers[i].Online = false
+		for _, key := range receivers[i].RecordKeys {
+			if at, ok := seenAt[key]; ok && now.Sub(at) < PresenceTimeout {
+				receivers[i].Online = true
+				break
+			}
+		}
+	}
 }

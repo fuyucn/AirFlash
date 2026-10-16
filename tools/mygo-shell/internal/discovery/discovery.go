@@ -42,6 +42,12 @@ type Receiver struct {
 	Members  []Record
 	Codecs   []int
 	Online   bool
+	// RecordKeys are the browse keys of the records this receiver was folded
+	// from, which is how its presence is later judged. The keys are kept
+	// rather than rebuilt, because a rebuild has to guess at the instance name
+	// and gets it wrong: "_airplay._tcp|" does not match
+	// "_airplay._tcp|Living Room._airplay._tcp.local|".
+	RecordKeys []string
 }
 
 // IsGroup reports whether this receiver is a stereo pair.
@@ -166,6 +172,9 @@ func fromDevice(id string, records []Record) Receiver {
 		Online:  true,
 	}
 	for _, rec := range records {
+		r.RecordKeys = append(r.RecordKeys, BrowseKey(rec))
+	}
+	for _, rec := range records {
 		if strings.HasPrefix(rec.Type, ServiceRAOP) {
 			r.Codecs = parseCodecs(rec.TXT["cn"])
 			break
@@ -230,18 +239,61 @@ func trimInstance(name string) string {
 // device apart from two devices.
 func identity(rec Record) string {
 	if id := strings.TrimSpace(rec.TXT["deviceid"]); id != "" {
-		return id
+		return Normalize(id)
 	}
 	if strings.HasPrefix(rec.Type, ServiceRAOP) {
 		if at := strings.Index(rec.Instance, "@"); at > 0 {
-			return strings.TrimSpace(rec.Instance[:at])
+			return Normalize(rec.Instance[:at])
 		}
 	}
 	return ""
 }
 
+// Normalize reduces a device identity to the one form a device is known by.
+//
+// A HomePod does not advertise its MAC the same way on both service types. From
+// the log of a real network:
+//
+//	_airplay:  deviceid=42:FB:06:B5:10:BD
+//	_raop:     deviceid=42FB06B510BD
+//
+// Same address, same device, two identities. Comparing the raw text would fold
+// one speaker into two receivers of the same name, so the identity is reduced
+// to the twelve hex digits of a MAC, lower case and without separators, and
+// anything else is left alone.
+//
+// This mirrors the desktop app's ReceiverIdentity.Normalize, so the shell and
+// the engine agree on which records are the same device.
+func Normalize(id string) string {
+	text := strings.TrimSpace(id)
+	mac := strings.NewReplacer(":", "", "-", "").Replace(text)
+	if len(mac) != 12 || !isHex(mac) {
+		return text
+	}
+	return strings.ToLower(mac)
+}
+
+// isHex reports whether every byte is a hex digit, which is what makes a
+// twelve-character string a MAC rather than an arbitrary identity.
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 func endpoint(rec Record) string {
 	return rec.Address + ":" + strconv.Itoa(rec.Port)
+}
+
+// BrowseKey is the key one record is stored under while browsing. Presence is
+// judged by it, so the browse and the folding must both use this and nothing
+// else.
+func BrowseKey(rec Record) string {
+	return rec.Type + "|" + rec.Instance + "|" + rec.Address
 }
 
 func field(records []Record, key string) string {

@@ -17,9 +17,7 @@ type Deps struct {
 	State     *engine.State
 	Settings  *settings.Store
 	Life      *shell.Lifecycle
-	Peers     func() []engine.Peer
 	Receivers func() []discovery.Receiver
-	OnStart   func(engine.Peer)
 	OnPlay    func(discovery.Receiver)
 	OnStop    func()
 	OnGain    func(float64)
@@ -33,13 +31,18 @@ type Deps struct {
 	// OnDeviceVolume sets a receiver's own volume, which the engine applies to
 	// the device rather than to the local mix.
 	OnDeviceVolume func(discovery.Receiver, float64)
+	// PlayingReceiver returns the receiver playback is currently going to, or
+	// nil when nothing is playing.
+	//
+	// The engine streams to hosts, not to a receiver, so the caller is the one
+	// that knows which receiver those hosts belong to. This is what the
+	// window's action operates on and what the volume slider is shown for:
+	// without it the action would fall back to whatever discovery listed
+	// first, which is not necessarily what is actually playing.
+	PlayingReceiver func() *discovery.Receiver
 	// OnOpenWindow opens the main window on a named page, which is how the
 	// panel reaches the full picture and the settings.
 	OnOpenWindow func(string)
-	// PlayingID returns the receiver playback is currently going to, or "".
-	// The engine streams to hosts, not to a receiver, so the caller is what
-	// knows which receiver those hosts belong to.
-	PlayingID func() string
 }
 
 // page identifies the content shown beside the sidebar.
@@ -541,17 +544,40 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 			if streaming {
 				label = "Stop"
 			}
-			if ui.PrimaryButton(c, label).Clicked() {
-				if streaming {
+			// It acts on the receiver that is playing, not on the first one
+			// discovery listed: those are different devices as often as not,
+			// and stopping the wrong one is worse than offering nothing.
+			action := ui.PrimaryButton(c, label)
+			if playing := s.playingReceiver(); playing != nil {
+				// A hint says which device the button is about, which a bare
+				// verb never answers.
+				action.Tooltip("Stop streaming to " + playing.Name)
+			}
+			if action.Clicked() {
+				switch {
+				case streaming:
 					if s.deps.OnStop != nil {
 						s.deps.OnStop()
 					}
-				} else if peers := s.deps.Peers(); len(peers) > 0 && s.deps.OnStart != nil {
-					s.deps.OnStart(peers[0])
+				case s.deps.PlayingReceiver != nil:
+					// Nothing is playing: start on the one the panel last
+					// played to, so the window and the panel act on the same
+					// device rather than on whichever came up first.
+					if rec := s.deps.PlayingReceiver(); rec != nil && s.deps.OnPlay != nil {
+						s.deps.OnPlay(*rec)
+					}
 				}
 			}
 		})
 	})
+}
+
+// playingReceiver is the receiver playback is going to, or nil.
+func (s *Shell) playingReceiver() *discovery.Receiver {
+	if s.deps.PlayingReceiver == nil {
+		return nil
+	}
+	return s.deps.PlayingReceiver()
 }
 
 // latencyControl offers Auto and, beside it, the targets a user can pin.
@@ -697,9 +723,18 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 			row.Children(func() {
 				ui.Column(c).Gap(3).Children(func() {
 					ui.Row(c).Gap(8).Children(func() {
-						ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(p.Ink)
+						// An offline receiver's name steps back, so the list
+						// says what is reachable rather than only what was found.
+						nameInk := p.Ink
+						if !rec.Online {
+							nameInk = p.InkMuted
+						}
+						ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk)
 						if rec.IsGroup() && !rec.Complete() {
 							ui.Text(c, "incomplete").FontSize(sizeSmall).TextColor(p.Warning)
+						}
+						if !rec.Online {
+							ui.Text(c, "offline").FontSize(sizeSmall).TextColor(p.InkMuted)
 						}
 					})
 					detail := rec.Address
@@ -714,9 +749,10 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 
 				ui.Spacer(c).Grow(1)
 
-				// A pair with one half cannot be played to, so it offers no
-				// action rather than one that would sound wrong.
-				if rec.Complete() {
+				// A pair with one half cannot be played to, and a receiver that
+				// has gone cannot be reached, so neither offers an action
+				// rather than one that would sound wrong or time out.
+				if rec.Complete() && rec.Online {
 					if ui.Button(c, "Play").Clicked() && s.deps.OnPlay != nil {
 						s.deps.OnPlay(rec)
 					}

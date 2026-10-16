@@ -1,6 +1,8 @@
 package discovery
 
 import (
+	"time"
+
 	"strings"
 	"testing"
 )
@@ -198,4 +200,103 @@ func names(rs []Receiver) []string {
 		out = append(out, r.Name)
 	}
 	return out
+}
+
+// TestOneDeviceIsOneReceiverWhateverItsDeviceIdLooksLike is the bug a real
+// network exposed: a HomePod advertises its MAC differently on the two service
+// types, and comparing the raw text split one speaker into two receivers of the
+// same name.
+//
+// From the log of a user's network:
+//
+//	_airplay:  deviceid=42:FB:06:B5:10:BD
+//	_raop:     deviceid=42FB06B510BD
+func TestOneDeviceIsOneReceiverWhateverItsDeviceIdLooksLike(t *testing.T) {
+	records := []Record{
+		{Instance: "Living Room._airplay._tcp.local", Type: ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "42:FB:06:B5:10:BD", "model": "AudioAccessory1,1"}},
+		{Instance: "42FB06B510BD@Living Room._raop._tcp.local", Type: ServiceRAOP, Address: "10.0.10.31", Port: 50123,
+			TXT: map[string]string{"deviceid": "42FB06B510BD", "cn": "0,1", "am": "AudioAccessory1,1"}},
+	}
+
+	got := Fold(records)
+	if len(got) != 1 {
+		t.Fatalf("folded %d receivers (%s), want 1: one device is one receiver",
+			len(got), names(got))
+	}
+	if got[0].Name != "Living Room" {
+		t.Errorf("name = %q, want the advertised name %q", got[0].Name, "Living Room")
+	}
+	// The name comes from the _airplay advert, never from the raop instance,
+	// which carries the MAC in front of it.
+	if strings.Contains(got[0].Name, "@") || strings.Contains(got[0].Name, "42FB06B510BD") {
+		t.Errorf("name = %q, want the device's name rather than its raop instance", got[0].Name)
+	}
+}
+
+func TestNormalizeReducesOnlyMACs(t *testing.T) {
+	// Anything that is not a twelve-digit hex string is left alone, so a pair
+	// id or an endpoint is not mangled into something else.
+	for _, tc := range []struct{ in, want string }{
+		{"42:FB:06:B5:10:BD", "42fb06b510bd"},
+		{"42FB06B510BD", "42fb06b510bd"},
+		{"42:FB:06:B5:10:BD", "42fb06b510bd"},
+		{"42-FB-06-B5-10-BD", "42fb06b510bd"},
+		{"PAIR1", "PAIR1"},
+		{"", ""},
+		{"10.0.10.31", "10.0.10.31"},
+	} {
+		if got := Normalize(tc.in); got != tc.want {
+			t.Errorf("Normalize(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestAReplyThatStopsIsReportedOffline(t *testing.T) {
+	// mDNS has no "a record went away" event, so a device that leaves stays in
+	// the browse's table forever. Reporting it as still online would send the
+	// user to a speaker that is no longer there.
+	records := []Record{
+		{Instance: "Living Room._airplay._tcp.local", Type: ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "42:FB:06:B5:10:BD", "model": "AudioAccessory1,1"}},
+	}
+	folded := Fold(records)
+
+	now := time.Now()
+	fresh := map[string]time.Time{}
+	for _, rec := range records {
+		fresh[BrowseKey(rec)] = now
+	}
+	markPresence(folded, fresh, now)
+	if !folded[0].Online {
+		t.Error("a receiver that just answered is reported offline")
+	}
+
+	stale := map[string]time.Time{}
+	for _, rec := range records {
+		stale[BrowseKey(rec)] = now.Add(-2 * PresenceTimeout)
+	}
+	markPresence(folded, stale, now)
+	if folded[0].Online {
+		t.Error("a receiver that has stopped answering is still reported online")
+	}
+}
+
+func TestPresenceIsJudgedOnTheKeysTheFoldRecorded(t *testing.T) {
+	// The browse's key includes the instance name, so the fold has to keep the
+	// key whole rather than rebuild one from the address: a rebuild produces
+	// "_airplay._tcp||10.0.10.31", which matches nothing, and every receiver
+	// would read as offline.
+	records := []Record{
+		{Instance: "Living Room._airplay._tcp.local", Type: ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "42:FB:06:B5:10:BD", "model": "AudioAccessory1,1"}},
+	}
+	folded := Fold(records)
+	if len(folded[0].RecordKeys) == 0 {
+		t.Fatal("the fold recorded no browse keys, so presence can never be judged")
+	}
+	if folded[0].RecordKeys[0] != BrowseKey(records[0]) {
+		t.Errorf("recorded key %q, want the browse's own key %q",
+			folded[0].RecordKeys[0], BrowseKey(records[0]))
+	}
 }
