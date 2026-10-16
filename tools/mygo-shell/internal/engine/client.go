@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -77,7 +78,15 @@ func Start(path string, handler Handler) (*Client, error) {
 // StartWithArgs launches the engine with arguments. Tests use it to point a
 // stand-in engine at a log file.
 func StartWithArgs(path string, args []string, handler Handler) (*Client, error) {
+	return StartWithOptions(path, args, nil, handler)
+}
+
+// StartWithOptions launches the engine with arguments and an environment.
+func StartWithOptions(path string, args []string, env []string, handler Handler) (*Client, error) {
 	cmd := exec.Command(path, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("engine stdin: %w", err)

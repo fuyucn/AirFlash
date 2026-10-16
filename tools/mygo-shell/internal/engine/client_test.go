@@ -1,84 +1,80 @@
 package engine
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-// writeFakeEngine writes a stand-in engine that appends every command it
-// receives to the log path given as its first argument, and answers hello and
-// start. The real engine is Windows-only, so the client is tested against this.
-func writeFakeEngine(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-
-	if runtime.GOOS == "windows" {
-		script := filepath.Join(dir, "fake.ps1")
-		body := `param([string]$out)
-$input | ForEach-Object {
-  Add-Content -Path $out -Value $_
-  if ($_ -match '"command":"hello"') {
-    Write-Output '{"version":1,"id":"c1","session_id":"s","event":"hello","engine_version":"test","mode":"native","live_loopback":true,"commands":["hello","start","stop"],"production_ready":false}'
-  }
-  if ($_ -match '"command":"start"') {
-    Write-Output '{"version":1,"id":"c2","session_id":"s","event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"clk","members":1}'
-  }
+// TestMain lets this test binary act as a stand-in engine. The client starts a
+// process and speaks JSONL to it; rather than shell scripts, which differ per
+// platform, the test re-executes itself with an environment variable set, and
+// the helper below becomes the engine.
+func TestMain(m *testing.M) {
+	if os.Getenv(fakeEngineEnv) != "" {
+		runFakeEngine()
+		return
+	}
+	os.Exit(m.Run())
 }
-`
-		if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
+
+const fakeEngineEnv = "AIRFLASH_FAKE_ENGINE"
+
+// runFakeEngine is the stand-in: it reads one JSON command per line and answers
+// hello and start, appending every command it saw to the log named by the
+// environment.
+func runFakeEngine() {
+	logPath := os.Getenv(fakeEngineEnv)
+	in := bufio.NewScanner(os.Stdin)
+	in.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	out := bufio.NewWriter(os.Stdout)
+
+	for in.Scan() {
+		line := in.Text()
+		if logPath != "" {
+			if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				fmt.Fprintln(f, line)
+				f.Close()
+			}
 		}
-		return script
+		switch {
+		case strings.Contains(line, `"command":"hello"`):
+			fmt.Fprintln(out, `{"version":1,"id":"c1","session_id":"s","event":"hello","engine_version":"test","mode":"native","live_loopback":true,"commands":["hello","start","stop"],"production_ready":false}`)
+		case strings.Contains(line, `"command":"start"`):
+			fmt.Fprintln(out, `{"version":1,"id":"c2","session_id":"s","event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"clk","members":1}`)
+		}
+		out.Flush()
 	}
-
-	script := filepath.Join(dir, "fake-engine")
-	body := `#!/bin/sh
-out="$1"
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "$out"
-  case "$line" in
-    *'"command":"hello"'*) printf '%s\n' '{"version":1,"id":"c1","session_id":"s","event":"hello","engine_version":"test","mode":"native","live_loopback":true,"commands":["hello","start","stop"],"production_ready":false}' ;;
-    *'"command":"start"'*) printf '%s\n' '{"version":1,"id":"c2","session_id":"s","event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"clk","members":1}' ;;
-  esac
-done
-`
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return script
 }
 
-// startFake runs the stand-in engine and returns the client, the command log
-// and the state the client feeds.
+// startFake runs this test binary as a stand-in engine and returns the client,
+// the command log and the state it feeds.
 func startFake(t *testing.T) (*Client, string, *State) {
 	t.Helper()
-	exe := writeFakeEngine(t)
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate the test binary: %v", err)
+	}
 	record := filepath.Join(t.TempDir(), "commands.log")
 
 	state := NewState()
 	var mu sync.Mutex
-	args := []string{record}
-	if runtime.GOOS == "windows" {
-		args = nil // the PowerShell stand-in takes the path as a parameter
-	}
-	if runtime.GOOS == "windows" {
-		args = []string{"-File", exe, record}
-		exe = "powershell"
-	}
-
-	c, err := StartWithArgs(exe, args, func(ev Event) {
-		mu.Lock()
-		state.Apply(ev)
-		mu.Unlock()
-	})
+	c, err := StartWithOptions(exe, nil,
+		[]string{fakeEngineEnv + "=" + record},
+		func(ev Event) {
+			mu.Lock()
+			state.Apply(ev)
+			mu.Unlock()
+		})
 	if err != nil {
-		t.Fatalf("start: %v", err)
+		t.Fatalf("start the stand-in engine: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c, record, state
@@ -133,22 +129,24 @@ func TestStartStreamCarriesTheRequestedLatency(t *testing.T) {
 		t.Errorf("sample rate = %d, want 44100", m.SampleRate)
 	}
 
-	// The wire format must be one JSON object per line with version 1.
-	if record != "" && runtime.GOOS != "windows" {
-		b, err := os.ReadFile(record)
-		if err == nil && len(b) > 0 {
-			first := firstLine(b)
-			var req map[string]any
-			if err := json.Unmarshal([]byte(first), &req); err != nil {
-				t.Fatalf("command is not JSON: %v (%q)", err, first)
-			}
-			if v, _ := req["version"].(float64); v != 1 {
-				t.Errorf("version = %v, want 1", req["version"])
-			}
-			if req["command"] != "start" {
-				t.Errorf("command = %v, want start", req["command"])
-			}
-		}
+	// The wire format is one JSON object per line, with version 1.
+	b, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("read the command log: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatal("no command reached the engine")
+	}
+	var req map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &req); err != nil {
+		t.Fatalf("the first command is not JSON: %v (%q)", err, lines[0])
+	}
+	if v, _ := req["version"].(float64); v != 1 {
+		t.Errorf("version = %v, want 1", req["version"])
+	}
+	if req["command"] != "start" {
+		t.Errorf("command = %v, want start", req["command"])
 	}
 }
 
