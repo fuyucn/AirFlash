@@ -48,8 +48,13 @@ func TestNormalizeClampsToEngineRanges(t *testing.T) {
 		in   Settings
 		want Settings
 	}{
-		{Settings{LatencyMs: 10}, Settings{LatencyMs: 200}},
-		{Settings{LatencyMs: 99999}, Settings{LatencyMs: 2000}},
+		{Settings{LatencyMs: 0}, Settings{LatencyMs: minLatencyMs}},
+		{Settings{LatencyMs: 99999}, Settings{LatencyMs: maxLatencyMs}},
+		// The desktop's Real-time mode asks for 120 ms, and it has to survive
+		// the round trip through settings: the floor here used to be 200, which
+		// silently raised it and made the desktop's most aggressive mode
+		// unreachable from the shell.
+		{Settings{LatencyMs: 120}, Settings{LatencyMs: 120}},
 		{Settings{Gain: -1}, Settings{Gain: 0}},
 		{Settings{Gain: 4}, Settings{Gain: 1}},
 		{Settings{SampleRate: 12345}, Settings{SampleRate: 44100}},
@@ -155,10 +160,29 @@ func TestAutoIsOnByDefault(t *testing.T) {
 	}
 }
 
-func TestLatencyChoicesAreWithinWhatTheEngineAccepts(t *testing.T) {
-	for _, ms := range LatencyChoices() {
-		if ms < 200 || ms > 2000 {
-			t.Errorf("choice %d is outside the engine's 200..2000", ms)
+func TestEveryNamedLatencyIsWithinWhatTheEngineAccepts(t *testing.T) {
+	// A target outside the engine's range is a start that fails, or a silent
+	// clamp the user never sees.
+	for _, mode := range LatencyChoices() {
+		ms := NamedLatencyMs(mode)
+		if ms < minLatencyMs || ms > maxLatencyMs {
+			t.Errorf("%s asks for %d ms, outside the engine's %d..%d", mode, ms, minLatencyMs, maxLatencyMs)
+		}
+	}
+}
+
+func TestTheNamedLatenciesAreTheDesktopHosts(t *testing.T) {
+	// Real-time, normal and buffered are the desktop's own three, with its own
+	// numbers. If the two hosts disagree about what "buffered" means, a user
+	// who tries both gets two different results from the same word.
+	want := map[LatencyMode]int{
+		LatencyRealtime: 120,
+		LatencyNormal:   200,
+		LatencyBuffered: 500,
+	}
+	for mode, ms := range want {
+		if got := NamedLatencyMs(mode); got != ms {
+			t.Errorf("%s = %d ms, want the desktop's %d", mode, got, ms)
 		}
 	}
 }

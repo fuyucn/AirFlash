@@ -642,21 +642,25 @@ func (s *Shell) playingReceiver() *discovery.Receiver {
 // depends on the network at the time. The setting beside it is the floor Auto
 // will not go below, which is the one thing only the user can say.
 func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+	// The segmented control holds an index: 0 is Auto, then one per named mode.
+	// The labels name the mode and its number, because a bare number is not
+	// something to choose between: 120 and 500 mean "aggressive" and "safe",
+	// and only the name says which is which.
 	choices := settings.LatencyChoices()
+	names := settings.LatencyLabels()
 
-	// The segmented control holds an index: 0 is Auto, then one per choice.
 	labels := make([]string, 0, len(choices)+1)
 	labels = append(labels, "Auto")
-	for _, ms := range choices {
-		labels = append(labels, fmt.Sprintf("%d", ms))
+	for _, mode := range choices {
+		labels = append(labels, names[mode])
 	}
 
 	index := 0
 	if !cfg.LatencyAuto {
-		// A pinned setting that is not one of the presets shows as Auto until
-		// the user picks again; the effective line below still states the truth.
-		for i, ms := range choices {
-			if ms == cfg.LatencyMs {
+		// A pinned setting that is not one of the named modes shows as Auto
+		// until the user picks again; the line below still states the truth.
+		for i, mode := range choices {
+			if settings.NamedLatencyMs(mode) == cfg.LatencyMs {
 				index = i + 1
 				break
 			}
@@ -666,7 +670,6 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 	ui.Column(c).Gap(8).Children(func() {
 		ui.Row(c).Gap(10).Children(func() {
 			sectionLabel(c, p, "LATENCY")
-			ui.Text(c, "milliseconds").FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
 		seg := ui.Segmented(c, &index, labels...)
@@ -680,7 +683,7 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 					s.deps.OnAuto(false)
 				}
 				if s.deps.OnLatency != nil {
-					s.deps.OnLatency(choices[index-1])
+					s.deps.OnLatency(settings.NamedLatencyMs(choices[index-1]))
 				}
 			}
 		}

@@ -3,6 +3,7 @@ package settings
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -154,11 +155,14 @@ func (s Settings) normalized() Settings {
 	if s.Mode != ModeLightweight {
 		s.Mode = ModeStandard
 	}
-	if s.LatencyMs < 200 {
-		s.LatencyMs = 200
+	// The engine's own range, 0..2000 (session.rs asserts it). The floor used to
+	// be 200 here, which silently raised Real-time's 120 ms to 200 and made the
+	// desktop's most aggressive mode unavailable through the shell.
+	if s.LatencyMs < minLatencyMs {
+		s.LatencyMs = minLatencyMs
 	}
-	if s.LatencyMs > 2000 {
-		s.LatencyMs = 2000
+	if s.LatencyMs > maxLatencyMs {
+		s.LatencyMs = maxLatencyMs
 	}
 	if s.Gain < 0 {
 		s.Gain = 0
@@ -190,6 +194,14 @@ func (s Settings) normalized() Settings {
 	return s
 }
 
+// minLatencyMs and maxLatencyMs are what the engine accepts, from its own
+// validation of latency_ms as 0..=2000. Zero is not offered: it is a valid ask
+// and an unusable one, since it leaves no room for a resend.
+const (
+	minLatencyMs = 1
+	maxLatencyMs = 2000
+)
+
 // maxSessions bounds the recorded history. Older sessions say less about the
 // network than recent ones, and an unbounded list would grow forever.
 const maxSessions = 50
@@ -210,8 +222,59 @@ func (s Settings) EffectiveLatencyMs(adapted int) int {
 	return adapted
 }
 
-// LatencyChoices are the fixed targets offered beside Auto.
-func LatencyChoices() []int { return []int{200, 300, 500, 750, 1000} }
+// Latency modes, named as the desktop host names them. The numbers are what the
+// engine is asked for, and the names are what a user picks between: they are the
+// only way to tell someone that 120 ms is the aggressive choice and 500 ms the
+// safe one without explaining jitter budgets to them.
+//
+// The same four the desktop offers, so the two hosts do not disagree about
+// what "buffered" means.
+type LatencyMode string
+
+const (
+	// LatencyRealtime is the lowest the engine accepts. It is the most
+	// responsive and the first to stutter on a weak network.
+	LatencyRealtime LatencyMode = "realtime"
+	// LatencyNormal is the desktop's default.
+	LatencyNormal LatencyMode = "normal"
+	// LatencyBuffered is the safe end of the range, and what a first-generation
+	// HomePod needed on the network this was built against.
+	LatencyBuffered LatencyMode = "buffered"
+	// LatencyCustom is a value chosen to the millisecond, not one of the three.
+	LatencyCustom LatencyMode = "custom"
+)
+
+// NamedLatencyMs is the target a named mode asks for.
+func NamedLatencyMs(mode LatencyMode) int {
+	switch mode {
+	case LatencyRealtime:
+		return 120
+	case LatencyBuffered:
+		return 500
+	default:
+		// Normal, and anything unrecognised, which the desktop treats the same
+		// way: its own default rather than a guess.
+		return 200
+	}
+}
+
+// LatencyChoices are the named modes, in the order the desktop offers them.
+func LatencyChoices() []LatencyMode {
+	return []LatencyMode{LatencyRealtime, LatencyNormal, LatencyBuffered}
+}
+
+// LatencyLabels are the names shown beside each mode, and the number each one
+// asks for. The number is in the label because it is the whole point of the
+// choice, and a mode named "buffered" says nothing to someone who has not read
+// the numbers.
+func LatencyLabels() map[LatencyMode]string {
+	return map[LatencyMode]string{
+		LatencyRealtime: fmt.Sprintf("Real-time · %d ms", NamedLatencyMs(LatencyRealtime)),
+		LatencyNormal:   fmt.Sprintf("Normal · %d ms", NamedLatencyMs(LatencyNormal)),
+		LatencyBuffered: fmt.Sprintf("Buffered · %d ms", NamedLatencyMs(LatencyBuffered)),
+		LatencyCustom:   "Custom",
+	}
+}
 
 // RedrawIntervalMs is how often the UI repaints a live reading.
 func (s Settings) RedrawIntervalMs() int {
