@@ -81,6 +81,12 @@ type App struct {
 	// to hosts, so the receiver those hosts belong to is the shell's own fact.
 	playing atomic.Pointer[string]
 
+	// stopping is set when the user asks for playback to end. It is what keeps a
+	// reconnect from bringing the session back after the user pressed stop:
+	// the loop waits between attempts, and without this it would wake and start
+	// an engine the user had just asked to be silent.
+	stopping atomic.Bool
+
 	// lastPaint is when the open surfaces were last asked to redraw. The
 	// engine reports more often than a person can read, so redraws are held to
 	// the rate the mode asks for.
@@ -199,6 +205,12 @@ func (a *App) openWindow(page string) {
 			// is also what frees a webview's process tree when switching away.
 			a.life.Close()
 			a.openWindow(page)
+		},
+		OnReconnect: func(on bool) {
+			a.settings.Update(func(s *settings.Settings) { s.Reconnect = on })
+		},
+		OnReconnectAttempts: func(n int) {
+			a.settings.Update(func(s *settings.Settings) { s.ReconnectAttempts = n })
 		},
 		OnClose: func() { a.life.Close() },
 		OnQuit:  func() { mygo.App.Quit() },
@@ -425,6 +437,9 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	if len(peers) == 0 {
 		return
 	}
+	// The receiver's own id, which is what PlayingReceiver looks up. The engine
+	// is told hosts, so without this the shell would only know an address, and
+	// an address does not say which receiver in the list it belongs to.
 	a.playing.Store(&r.ID)
 	a.startStreamTo(peers)
 }
@@ -449,47 +464,32 @@ func (a *App) PlayingReceiver() *discovery.Receiver {
 }
 
 // startStreamTo starts the engine if needed and begins playback to the peers.
+// startStreamTo begins a session on a receiver, and keeps it alive across a
+// reconnect if the user asked for that.
+//
+// The session lives in its own goroutine, so the surfaces stay responsive while
+// the engine is being brought up, and so the retry loop can wait without holding
+// anything the UI needs.
 func (a *App) startStreamTo(peers []engine.Peer) {
 	if len(peers) == 0 {
 		return
 	}
-	c := a.client.Load()
-	if c == nil || !c.Running() {
-		if a.enginePath == "" {
-			log.Printf("no engine path configured")
-			return
-		}
-		started, err := engine.Start(a.enginePath, a.onEngineEvent)
-		if err != nil {
-			log.Printf("engine start failed: %v", err)
-			return
-		}
-		a.client.Store(started)
-		_, _ = started.Hello()
-		c = started
-	}
-
-	cfg := a.settings.Current()
-	opts := engine.DefaultStreamOptions()
-	// Auto, when it is on, raises the target from what the network did before.
-	opts.LatencyMs = cfg.EffectiveLatencyMs(a.adaptedTarget())
-	opts.Gain = cfg.Gain
-	opts.SampleRate = cfg.SampleRate
-	a.state.ResetSession()
-
-	if _, err := c.StartStream(peers, opts); err != nil {
-		log.Printf("start failed: %v", err)
-	}
-	a.settings.Update(func(s *settings.Settings) { s.LastPeer = peers[0].Host })
+	go a.runSession(session{peers: peers})
 }
 
 func (a *App) stopStream() {
+	// Set first: the reconnect loop waits between attempts, and stopping has to
+	// be visible before the engine is asked to stop so that a loop waking up
+	// sees it.
+	a.stopping.Store(true)
+	a.playing.Store(nil)
 	if c := a.client.Load(); c != nil {
 		_, _ = c.Stop()
 	}
-	a.playing.Store(nil)
 	// The session is over, so what it showed about the network is now known.
-	a.recordSession()
+	// runSession also records one when it ends by itself, so this is the path
+	// for a session the user ended.
+	a.state.Apply(engine.Event{Event: "stopped", Raw: []byte(`{"event":"stopped"}`)})
 }
 
 // Probe is the start-up report CI reads.

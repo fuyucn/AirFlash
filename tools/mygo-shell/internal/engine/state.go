@@ -81,6 +81,13 @@ type Metrics struct {
 	// tell that the device answering is the one they meant.
 	Model string
 
+	// Reconnecting is set while a dropped session is being retried, with the
+	// attempt and the total. The engine has no part in this: the retry is the
+	// shell's, so the numbers are set from here rather than read from an event.
+	Reconnecting     bool
+	ReconnectAttempt int
+	ReconnectMax     int
+
 	// SessionPeakRTTMs and rttSamples describe the round trip over the whole
 	// session. The peak is what a gap has to fit inside; the spread says
 	// whether the link is slow or erratic.
@@ -117,6 +124,18 @@ func (s Slot) Gapped() bool { return s.Skipped > 0 || s.Recoveries > 0 || s.Expi
 // a wider window on one would put a spike and its gap at different places.
 // Two minutes is as far back as a chart of seconds stays readable.
 const WindowSeconds = 120
+
+// SetReconnecting records that a session is being retried, with the attempt and
+// the total, so the surfaces can say which attempt they are waiting on.
+func (s *State) SetReconnecting(attempt, max int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Zero means no retry is being waited out, which is the ordinary case while
+	// a connection is starting or audio is flowing.
+	s.metrics.Reconnecting = attempt > 0
+	s.metrics.ReconnectAttempt = attempt
+	s.metrics.ReconnectMax = max
+}
 
 // SessionRTT returns the peak and median round trip of the session so far.
 // The median needs a few samples to mean anything, so an empty second value is

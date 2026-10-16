@@ -57,6 +57,15 @@ type Settings struct {
 	// the target at a session boundary, never during one.
 	Adapt bool `json:"adapt"`
 
+	// Reconnect retries a session that dropped, which is what the desktop host
+	// calls ForceReconnect. Off by default: reaching for a speaker again by
+	// itself is something to ask for.
+	Reconnect bool `json:"reconnect"`
+
+	// ReconnectAttempts is how many times to try before giving up. The desktop
+	// host bounds this at twenty.
+	ReconnectAttempts int `json:"reconnect_attempts"`
+
 	// Sessions is what previous sessions turned out to be, newest last. It is
 	// how the shell knows whether the network is actually getting worse.
 	Sessions []Session `json:"sessions"`
@@ -77,13 +86,14 @@ type Session struct {
 // which is the value that made playback smooth on a first-generation HomePod.
 func Default() Settings {
 	return Settings{
-		Mode:        ModeStandard,
-		LatencyMs:   500,
-		Gain:        1.0,
-		SampleRate:  44100,
-		ShowTrend:   true,
-		Adapt:       true,
-		LatencyAuto: true,
+		Mode:              ModeStandard,
+		LatencyMs:         500,
+		Gain:              1.0,
+		SampleRate:        44100,
+		ShowTrend:         true,
+		Adapt:             true,
+		LatencyAuto:       true,
+		ReconnectAttempts: 5,
 	}
 }
 
@@ -165,6 +175,14 @@ func (s Settings) normalized() Settings {
 	if s.Mode == ModeLightweight {
 		s.ShowTrend = false
 		s.ReducedMotion = true
+	}
+	// The desktop host bounds retries at twenty; one is a single attempt with no
+	// retry behind it.
+	if s.ReconnectAttempts < 1 {
+		s.ReconnectAttempts = 1
+	}
+	if s.ReconnectAttempts > 20 {
+		s.ReconnectAttempts = 20
 	}
 	if len(s.Sessions) > maxSessions {
 		s.Sessions = s.Sessions[len(s.Sessions)-maxSessions:]

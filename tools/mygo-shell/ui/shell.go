@@ -40,6 +40,10 @@ type Deps struct {
 	// without it the action would fall back to whatever discovery listed
 	// first, which is not necessarily what is actually playing.
 	PlayingReceiver func() *discovery.Receiver
+	// OnReconnect turns the retry-a-dropped-session setting on or off.
+	OnReconnect func(bool)
+	// OnReconnectAttempts sets how many times to try.
+	OnReconnectAttempts func(int)
 	// OnOpenWindow opens the main window on a named page, which is how the
 	// panel reaches the full picture and the settings.
 	OnOpenWindow func(string)
@@ -790,6 +794,41 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			ui.Text(c, "Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
 				"either way.").FontSize(sizeSmall).TextColor(p.InkMuted)
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+		// Reconnecting a session that drops. Off by default, because reaching for
+		// a speaker again on its own is something to ask for rather than assume.
+		ui.Column(c).Gap(8).Children(func() {
+			reconnect := cfg.Reconnect
+			ui.Row(c).FillWidth().Children(func() {
+				ui.Text(c, "Reconnect a dropped stream").FontSize(sizeBody).TextColor(p.Ink)
+				ui.Spacer(c).Grow(1)
+				ui.Switch(c, &reconnect).OnChange(func() {
+					if s.deps.OnReconnect != nil {
+						s.deps.OnReconnect(reconnect)
+					}
+				})
+			})
+			ui.Text(c, "When the connection drops, start it again. Each retry waits "+
+				"twice as long as the one before, up to eight seconds, and a stream that "+
+				"ran for ten seconds starts the count over. A HomePod that asks for a PIN "+
+				"is not retried: that needs you.").
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+
+			if cfg.Reconnect {
+				attempts := float64(cfg.ReconnectAttempts)
+				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "Attempts").FontSize(sizeSmall).TextColor(p.InkMuted)
+					ui.Slider(c, &attempts, 1, 20).Grow(1).OnChange(func() {
+						if s.deps.OnReconnectAttempts != nil {
+							s.deps.OnReconnectAttempts(int(attempts))
+						}
+					})
+					ui.Text(c, fmt.Sprintf("%d", int(attempts))).FontSize(sizeSmall).
+						TextColor(p.Ink)
+				})
+			}
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 

@@ -271,3 +271,22 @@ func TestTheStatsActionActsOnThePlayingDevice(t *testing.T) {
 			playedName, living.Name)
 	}
 }
+
+func TestAReconnectSaysWhichAttemptItIsOn(t *testing.T) {
+	// "connecting…" and "reconnecting 2/5" are different situations: the second
+	// tells the user the app is still trying, and how many tries are left.
+	st := streamingState()
+	st.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
+	// No retry in progress: an ordinary connection.
+	if got := phaseNote(st.Snapshot()); got != "connecting…" {
+		t.Errorf("note = %q, want an ordinary connecting message", got)
+	}
+
+	// A retry under way, on the second of five.
+	st2 := streamingState()
+	st2.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
+	st2.SetReconnecting(2, 5)
+	if got := phaseNote(st2.Snapshot()); got != "reconnecting 2/5" {
+		t.Errorf("note = %q, want the attempt named: it is what says the app is still on it", got)
+	}
+}

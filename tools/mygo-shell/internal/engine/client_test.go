@@ -181,3 +181,51 @@ func firstLine(b []byte) string {
 	}
 	return string(b)
 }
+
+func TestTheEngineProcessEndingIsReported(t *testing.T) {
+	// The engine dies and the events simply stop. Without a signal the shell
+	// keeps showing the last reading as though audio were still flowing, which
+	// is the one thing a streaming app must never imply.
+	client, _, _ := startFake(t)
+
+	if _, err := client.Hello(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait blocks until the process ends, which is nothing while it lives.
+	select {
+	case <-client.Wait():
+		t.Fatal("Wait fired while the engine is still running")
+	default:
+	}
+
+	// The stand-in leaves when its stdin closes, which is how a real engine
+	// ends: it stops, and the only thing that records that is this.
+	client.Close()
+	select {
+	case <-client.Wait():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not report the engine ending")
+	}
+}
+
+func TestRunningGoesFalseWhenTheEngineDies(t *testing.T) {
+	// The panel asks Running() to decide whether it can still send commands.
+	client, _, _ := startFake(t)
+
+	if _, err := client.Hello(); err != nil {
+		t.Fatal(err)
+	}
+	if !client.Running() {
+		t.Fatal("Running is false before the engine has ended")
+	}
+
+	client.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for client.Running() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if client.Running() {
+		t.Error("Running still reports the engine alive after it ended")
+	}
+}

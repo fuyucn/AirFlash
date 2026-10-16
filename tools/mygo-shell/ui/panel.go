@@ -265,6 +265,9 @@ func (p *Panel) reading(c *ui.Context, pal palette, cfg settings.Settings, st en
 func phaseNote(st engine.Metrics) string {
 	switch st.Phase {
 	case engine.PhaseConnecting, engine.PhaseNegotiating:
+		if st.Reconnecting {
+			return fmt.Sprintf("reconnecting %d/%d", st.ReconnectAttempt, st.ReconnectMax)
+		}
 		return "connecting…"
 	case engine.PhaseFailed:
 		// The engine's error text is the one thing that says why, and it is

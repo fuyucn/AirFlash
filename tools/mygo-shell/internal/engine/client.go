@@ -58,14 +58,16 @@ type Handler func(Event)
 
 // Client owns one engine process.
 type Client struct {
-	mu       sync.Mutex
-	cmd      *exec.Cmd
-	stdin    io.WriteCloser
-	seq      atomic.Uint64
-	session  string
-	handler  Handler
-	exited   atomic.Bool
-	waitOnce sync.Once
+	mu      sync.Mutex
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	seq     atomic.Uint64
+	session string
+	handler Handler
+	exited  atomic.Bool
+	// exitedCh is closed once, when the engine process ends.
+	exitedCh   chan struct{}
+	exitedOnce sync.Once
 }
 
 // ErrNotRunning is returned when no engine process is alive.
@@ -104,14 +106,26 @@ func StartWithOptions(path string, args []string, env []string, handler Handler)
 		return nil, fmt.Errorf("start engine: %w", err)
 	}
 
-	c := &Client{cmd: cmd, stdin: stdin, handler: handler, session: newSessionID()}
+	c := &Client{cmd: cmd, stdin: stdin, handler: handler, session: newSessionID(),
+		exitedCh: make(chan struct{})}
 	go c.read(stdout)
 	go drain(stderr)
 	go func() {
 		_ = cmd.Wait()
 		c.exited.Store(true)
+		c.exitedOnce.Do(func() { close(c.exitedCh) })
 	}()
 	return c, nil
+}
+
+// Wait reports when the engine process ends, so the shell can tell the
+// difference between a session that ended and an engine that died.
+//
+// Without this the shell has no way to see the engine crash: the events stop
+// arriving, the readings stop moving, and the panel keeps showing the last
+// number it was given as though audio were still flowing.
+func (c *Client) Wait() <-chan struct{} {
+	return c.exitedCh
 }
 
 // Running reports whether the process is still alive.

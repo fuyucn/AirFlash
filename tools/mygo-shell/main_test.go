@@ -63,3 +63,26 @@ func TestAnEngineEventReachesTheModel(t *testing.T) {
 		t.Errorf("phase = %q, want the event to have been applied", got)
 	}
 }
+
+func TestAnAuthFailureIsNotRetriedForever(t *testing.T) {
+	// A retry asks the receiver for the credentials that just failed. What a
+	// failure like this needs is a PIN, so the loop has to stop and say so.
+	for _, message := range []string{
+		"authentication failed",
+		"pairing required",
+		"pin needed",
+		"credential rejected",
+		"unauthorized",
+	} {
+		if !isAuthFailure(message) {
+			t.Errorf("%q was not recognised as an authentication failure", message)
+		}
+	}
+	// And a genuine network failure is, because that is what a retry is for.
+	if isAuthFailure("connection reset by peer") {
+		t.Error("a network failure was mistaken for an authentication failure")
+	}
+	if isAuthFailure("the engine stopped") {
+		t.Error("an engine ending was mistaken for an authentication failure")
+	}
+}
