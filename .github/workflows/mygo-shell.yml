@@ -30,6 +30,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # build-native.ps1 runs the repository's compatibility audit, which needs
+      # the Python environment the other workflows set up.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+
+      - name: Sync Python environment
+        shell: pwsh
+        run: |
+          uv sync --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
       - name: Build the engine
         shell: pwsh
         run: ./scripts/build-native.ps1
