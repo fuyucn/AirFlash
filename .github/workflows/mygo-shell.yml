@@ -1,0 +1,127 @@
+name: mygo shell
+
+# Builds the Go shell for its two target platforms. macOS is deliberately
+# absent: macOS plays to a HomePod through AirPlay itself.
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Also publish the builds as a release'
+        type: boolean
+        required: false
+        default: true
+  push:
+    paths:
+      - 'tools/mygo-shell/**'
+      - '.github/workflows/mygo-shell.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+
+      - name: Test
+        shell: pwsh
+        working-directory: tools/mygo-shell
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build
+        shell: pwsh
+        working-directory: tools/mygo-shell
+        run: |
+          go build -trimpath -ldflags "-s -w" -o ../../artifacts/shell/AirFlash.exe .
+          Get-ChildItem ../../artifacts/shell
+
+      - name: Start-up report
+        shell: pwsh
+        run: |
+          $exe = 'artifacts/shell/AirFlash.exe'
+          $report = [IO.Path]::GetFullPath('artifacts/shell/probe-windows.json')
+          $p = Start-Process -FilePath $exe -ArgumentList @('-probe', $report) -PassThru -WindowStyle Hidden
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'probe timed out' }
+          if ($p.ExitCode -ne 0) { throw "probe exited $($p.ExitCode)" }
+          Get-Content $report -Raw
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airflash-shell-win-x64
+          path: artifacts/shell/
+          retention-days: 90
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+
+      # Native UI on Linux draws through OpenGL, and the window needs a display
+      # server to exist at all; the headless runner supplies a virtual one.
+      - name: Install the GUI libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libgl1-mesa-dev libx11-dev \
+            libxkbcommon-dev libwayland-dev xvfb
+
+      - name: Test
+        working-directory: tools/mygo-shell
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build
+        working-directory: tools/mygo-shell
+        run: |
+          go build -trimpath -ldflags "-s -w" -o ../../artifacts/shell/airflash-shell .
+          ls -la ../../artifacts/shell
+
+      - name: Start-up report
+        run: |
+          xvfb-run -a artifacts/shell/airflash-shell -probe "$PWD/artifacts/shell/probe-linux.json"
+          cat artifacts/shell/probe-linux.json
+
+      - name: Package
+        run: |
+          cd artifacts/shell
+          tar czf airflash-shell-linux-amd64.tar.gz airflash-shell
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airflash-shell-linux-x64
+          path: artifacts/shell/
+          retention-days: 90
+
+  release:
+    needs: [windows, linux]
+    if: ${{ inputs.release }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag='shell-v0.1.0'
+          if ! gh release view "$tag" --repo ${{ github.repository }} >/dev/null 2>&1; then
+            gh release create "$tag" --repo ${{ github.repository }} \
+              --title 'mygo shell 0.1.0' \
+              --notes 'The AirFlash shell in Go, for Windows and Linux. macOS is out of scope: macOS plays to a HomePod through AirPlay itself.'
+          fi
+          find artifacts -type f | sort
+          gh release upload "$tag" $(find artifacts -type f) --repo ${{ github.repository }} --clobber
