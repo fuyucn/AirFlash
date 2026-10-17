@@ -2,6 +2,8 @@ package engine
 
 import (
 	"encoding/json"
+	"log"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -45,6 +47,20 @@ func phaseOf(name string) StreamPhase {
 		return PhaseNegotiating
 	}
 	return StreamPhase(name)
+}
+
+// tracePhase logs a phase change when AIRFLASH_TRACE_PHASE is set.
+//
+// A tray app has no console, so a phase that does not move - or moves to the
+// wrong one - is otherwise invisible: the user sees a word and a colour, and
+// nothing says which event put it there. This is the diagnostic for that: it
+// prints the engine's own name, the phase it became, and what the previous one
+// was, so a run can be read back and the offending event identified.
+func tracePhase(from, to StreamPhase, detail string) {
+	if os.Getenv("AIRFLASH_TRACE_PHASE") == "" {
+		return
+	}
+	log.Printf("phase: %q -> %q (detail %q)", from, to, detail)
 }
 
 // Metrics is the live picture the UI draws.
@@ -329,7 +345,9 @@ func (s *State) Apply(ev Event) {
 		}
 		if json.Unmarshal(ev.Raw, &p) == nil {
 			s.metrics.Detail = p.Phase
+			from := s.metrics.Phase
 			s.metrics.Phase = phaseOf(p.Phase)
+			tracePhase(from, s.metrics.Phase, p.Phase)
 		}
 	case "streaming":
 		var st struct {
@@ -339,7 +357,9 @@ func (s *State) Apply(ev Event) {
 			Members            int    `json:"members"`
 		}
 		if json.Unmarshal(ev.Raw, &st) == nil {
+			from := s.metrics.Phase
 			s.metrics.Phase = PhaseStreaming
+			tracePhase(from, s.metrics.Phase, "streaming")
 			s.metrics.RequestedMs = st.RequestedLatencyMs
 			s.metrics.SampleRate = st.SampleRate
 			s.metrics.ClockID = st.ClockID
