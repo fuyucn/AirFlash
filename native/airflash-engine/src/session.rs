@@ -22,6 +22,29 @@ use std::{
 };
 use uuid::Uuid;
 
+fn qpc_ns() -> u64 {
+    #[cfg(windows)]
+    {
+        crate::wasapi::qpc_ns()
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+fn load_saved_credentials(device_id: &str) -> Result<Option<auth::Credentials>> {
+    #[cfg(windows)]
+    {
+        crate::credentials::load(&crate::credentials::directory(), device_id)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = device_id;
+        Ok(None)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Peer {
@@ -235,7 +258,7 @@ impl Member {
         let saved = if device_id.is_empty() {
             None
         } else {
-            crate::credentials::load(&crate::credentials::directory(), device_id)?
+            load_saved_credentials(device_id)?
         };
         let secret = (if let Some(credentials) = saved {
             auth::verify(&mut conn, &credentials)
@@ -497,15 +520,21 @@ pub fn probe_with_volume(
 pub fn probe_with_controls(
     options: ProbeOptions,
     cancel: Cancellation,
-    gain: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    #[cfg_attr(not(windows), allow(unused_variables))] gain: std::sync::Arc<
+        std::sync::atomic::AtomicU32,
+    >,
     volume: crate::volume::Control,
-    equalizer: crate::equalizer::Control,
+    #[cfg_attr(not(windows), allow(unused_variables))] equalizer: crate::equalizer::Control,
     emit: impl Fn(Json),
 ) -> Result<()> {
     if options.duration_ms == 0 {
         options.validate_start()?;
     } else {
         options.validate()?;
+    }
+    #[cfg(not(windows))]
+    if options.source == "loopback" {
+        anyhow::bail!("live loopback capture requires Windows");
     }
     let samples = if options.source == "wav" {
         load_quiet_wav(&options)?
@@ -560,6 +589,7 @@ pub fn probe_with_controls(
             .map_err(|error| Fault::from_error(member.peer.host, "control", &error))?;
     }
     let rate = options.sample_rate;
+    #[cfg(windows)]
     let live = if options.source == "loopback" {
         Some(crate::live::Loopback::start(
             options.capture_endpoint.clone(),
@@ -569,6 +599,7 @@ pub fn probe_with_controls(
     } else {
         None
     };
+    #[cfg(windows)]
     if let Some(source) = &live {
         let until = Instant::now() + Duration::from_millis(200);
         while !source.ready()? && Instant::now() < until {
@@ -587,10 +618,11 @@ pub fn probe_with_controls(
     let volume_worker = crate::volume::Worker::start(members.iter().map(|m|
         (m.peer.host.to_string(), m.uri.clone(), m.conn.clone())).collect(), volume)?;
     let mut next_metrics = start + Duration::from_secs(1);
+    #[cfg(windows)]
     let mut last_marker = 0u64;
     let mut next_sync = start;
     emit(
-        json!({"event":"streaming","members":members.len(),"clock_id":clock_id,"first_send_unix_ns":clock.now_ns(),"first_send_qpc_ns":crate::wasapi::qpc_ns(),"requested_latency_ms":options.latency_ms,"sample_rate":rate,"measured_latency_ms":null,"qualified":false}),
+        json!({"event":"streaming","members":members.len(),"clock_id":clock_id,"first_send_unix_ns":clock.now_ns(),"first_send_qpc_ns":qpc_ns(),"requested_latency_ms":options.latency_ms,"sample_rate":rate,"measured_latency_ms":null,"qualified":false}),
     );
     let mut pcm = vec![0; PCM_BYTES];
     let outcome = (|| -> Result<()> {
@@ -616,6 +648,7 @@ pub fn probe_with_controls(
                     member.media.abandon_backlog();
                     member.media.packetizer.skip_packets(skipped);
                 }
+                #[cfg(windows)]
                 if let Some(source) = &live {
                     source.discard_stale();
                 }
@@ -631,6 +664,7 @@ pub fn probe_with_controls(
                 }
                 next_sync = now + Duration::from_millis(100);
             }
+            #[cfg(windows)]
             if let Some(source) = &live {
                 let (packet, marker) =
                     source.packet(f32::from_bits(gain.load(Ordering::Relaxed)))?;
@@ -638,12 +672,22 @@ pub fn probe_with_controls(
                 if let Some(qpc) = marker {
                     if qpc.saturating_sub(last_marker) > 200_000_000 {
                         emit(
-                            json!({"event":"audio_onset","capture_qpc_ns":qpc,"send_qpc_ns":crate::wasapi::qpc_ns()}),
+                            json!({"event":"audio_onset","capture_qpc_ns":qpc,"send_qpc_ns":qpc_ns()}),
                         );
                     }
                     last_marker = qpc;
                 }
-            } else {
+            }
+            #[cfg(windows)]
+            if live.is_none() {
+                for (j, bytes) in pcm.chunks_exact_mut(2).enumerate() {
+                    let index = schedule.frames as usize * 2 + j;
+                    let sample = samples.get(index).copied().unwrap_or(0);
+                    bytes.copy_from_slice(&sample.to_be_bytes());
+                }
+            }
+            #[cfg(not(windows))]
+            {
                 for (j, bytes) in pcm.chunks_exact_mut(2).enumerate() {
                     let index = schedule.frames as usize * 2 + j;
                     let sample = samples.get(index).copied().unwrap_or(0);
@@ -651,6 +695,7 @@ pub fn probe_with_controls(
                 }
             }
             if now >= next_metrics {
+                #[cfg(windows)]
                 if let Some(source) = &live {
                     emit(json!({"event":"capture_metrics","metrics":source.metrics()}));
                 }
@@ -675,6 +720,7 @@ pub fn probe_with_controls(
         }
         Ok(())
     })();
+    #[cfg(windows)]
     if let Some(source) = &live {
         emit(json!({"event":"capture_metrics","metrics":source.metrics()}));
     }

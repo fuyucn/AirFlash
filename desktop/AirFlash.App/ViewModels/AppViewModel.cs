@@ -459,13 +459,15 @@ public sealed class AppViewModel : ObservableObject, IAsyncDisposable
             [nameof(MonitorLocalDelay)] = MonitorLocalDelay, [nameof(MonitorNetworkRtt)] = MonitorNetworkRtt,
             [nameof(MonitorEstimatedLatency)] = MonitorEstimatedLatency,
             [nameof(Health)] = Health.Level.ToString(), [nameof(HealthReason)] = HealthReason,
-            [nameof(HealthLabel)] = HealthLabel,
+            [nameof(HealthLabel)] = HealthLabel, [nameof(HealthPalette)] = HealthPalette,
             [nameof(MonitorEstimatedValue)] = MonitorEstimatedValue, [nameof(MonitorEstimatedParts)] = MonitorEstimatedParts,
             [nameof(MonitorTargetValue)] = MonitorTargetValue, [nameof(MonitorTargetSource)] = MonitorTargetSource,
             [nameof(MonitorRttValue)] = MonitorRttValue, [nameof(MonitorRttNote)] = MonitorRttNote,
             [nameof(MonitorBacklogged)] = MonitorBacklogged, [nameof(MonitorDroppedBacklog)] = MonitorDroppedBacklog,
-            [nameof(LatencyTrend)] = LatencyTrend.Count.ToString(), [nameof(RoundTripTrend)] = RoundTripTrend.Count.ToString(),
-            [nameof(CaptureTrend)] = CaptureTrend.Count.ToString(), [nameof(BacklogTrend)] = BacklogTrend.Count.ToString(),
+            // Count alone stops changing once the ring buffer is full; revision
+            // ensures each new sample still repaints every trend chart.
+            [nameof(LatencyTrend)] = _history.Revision.ToString(), [nameof(RoundTripTrend)] = _history.Revision.ToString(),
+            [nameof(CaptureTrend)] = _history.Revision.ToString(), [nameof(BacklogTrend)] = _history.Revision.ToString(),
             [nameof(TrendSpan)] = TrendSpan, [nameof(HasTrend)] = HasTrend.ToString(),
             [nameof(MonitorLastFault)] = MonitorLastFault, [nameof(MonitorBeforeFault)] = MonitorBeforeFault
         };

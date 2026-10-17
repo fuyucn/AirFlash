@@ -58,9 +58,24 @@ public sealed class MonitorHistoryTests
     {
         var history = new MonitorHistory();
         history.Add(Sample(0, latency: 120));
+        var added = history.Revision;
         history.Clear();
         Assert.Equal(0, history.Count);
         Assert.Empty(history.Values(MonitorSeries.Latency));
+        Assert.True(history.Revision > added);
+    }
+
+    [Fact]
+    public void RevisionChangesWhenAFullBufferReceivesANewSample()
+    {
+        var history = new MonitorHistory();
+        for (var i = 0; i < MonitorHistory.Capacity; i++) history.Add(Sample(i, latency: i));
+        var count = history.Count;
+        var revision = history.Revision;
+        history.Add(Sample(MonitorHistory.Capacity, latency: 200));
+        Assert.Equal(count, history.Count);
+        Assert.True(history.Revision > revision);
+        Assert.Equal(200, history.Values(MonitorSeries.Latency).Last());
     }
 
     [Fact]

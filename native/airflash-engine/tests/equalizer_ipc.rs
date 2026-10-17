@@ -50,6 +50,12 @@ fn malformed_equalizer_updates_are_nonfatal_and_probes_reject_eq() {
             .unwrap()
             .contains(&json!("set_equalizer"))
     );
+    let commands = events[0]["commands"].as_array().unwrap();
+    if cfg!(windows) {
+        assert!(commands.contains(&json!("pair")) && commands.contains(&json!("pair_pin")));
+    } else {
+        assert!(!commands.contains(&json!("pair")) && !commands.contains(&json!("pair_pin")));
+    }
     for (i, event) in events.iter().enumerate().take(4).skip(1) {
         assert_eq!(event["event"], "equalizer_error");
         assert_eq!(event["sequence"], i);

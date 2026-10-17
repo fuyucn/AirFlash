@@ -43,6 +43,27 @@ struct Running {
     volume: airflash_engine::volume::Control,
     equalizer: Option<(airflash_engine::equalizer::Control, u32)>,
 }
+
+#[cfg(windows)]
+fn save_pairing_credentials(
+    device_id: &str,
+    credentials: &airflash_engine::auth::Credentials,
+) -> anyhow::Result<()> {
+    airflash_engine::credentials::save(
+        &airflash_engine::credentials::directory(),
+        device_id,
+        credentials,
+    )
+}
+
+#[cfg(not(windows))]
+fn save_pairing_credentials(
+    _device_id: &str,
+    _credentials: &airflash_engine::auth::Credentials,
+) -> anyhow::Result<()> {
+    anyhow::bail!("pairing requires Windows")
+}
+
 impl Drop for Running {
     fn drop(&mut self) {
         self.cancel.cancel();
@@ -108,12 +129,45 @@ fn main() {
             );
             continue;
         }
-        match request.command.as_str() {
-            "hello" => send(
+        #[cfg(not(windows))]
+        if request.command == "pair" {
+            send(
                 &request.id,
                 &request.session_id,
-                json!({"event":"hello","engine_version":env!("CARGO_PKG_VERSION"),"mode":"native","qualification":"partial","live_loopback":true,"commands":["hello","start","probe","stop","set_gain","set_equalizer","set_device_volume","pair","pair_pin"],"production_ready":false}),
-            ),
+                json!({"event":"error","message":"pairing requires Windows"}),
+            );
+            continue;
+        }
+        match request.command.as_str() {
+            "hello" => {
+                #[cfg(windows)]
+                let commands = json!([
+                    "hello",
+                    "start",
+                    "probe",
+                    "stop",
+                    "set_gain",
+                    "set_equalizer",
+                    "set_device_volume",
+                    "pair",
+                    "pair_pin"
+                ]);
+                #[cfg(not(windows))]
+                let commands = json!([
+                    "hello",
+                    "start",
+                    "probe",
+                    "stop",
+                    "set_gain",
+                    "set_equalizer",
+                    "set_device_volume"
+                ]);
+                send(
+                    &request.id,
+                    &request.session_id,
+                    json!({"event":"hello","engine_version":env!("CARGO_PKG_VERSION"),"mode":"native","qualification":"partial","live_loopback":cfg!(windows),"commands":commands,"production_ready":false}),
+                );
+            }
             "probe" | "start" => {
                 let options: ProbeOptions = match serde_json::from_value(request.params) {
                     Ok(o) => o,
@@ -290,11 +344,7 @@ fn main() {
                                 }
                             }
                         })?;
-                        airflash_engine::credentials::save(
-                            &airflash_engine::credentials::directory(),
-                            &device_id,
-                            &credentials,
-                        )?;
+                        save_pairing_credentials(&device_id, &credentials)?;
                         send(
                             &request.id,
                             &request.session_id,

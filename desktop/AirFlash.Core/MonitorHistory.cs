@@ -21,16 +21,23 @@ public sealed class MonitorHistory
     private readonly Queue<MonitorSample> _samples = new(Capacity);
     public IReadOnlyCollection<MonitorSample> Samples => _samples;
     public int Count => _samples.Count;
+    /// <summary>Increments whenever the retained series changes.</summary>
+    public long Revision { get; private set; }
 
     /// <summary>Add one sample, discarding the oldest once the buffer is full.</summary>
     public void Add(MonitorSample sample)
     {
         while (_samples.Count >= Capacity) _samples.Dequeue();
         _samples.Enqueue(sample);
+        Revision++;
     }
 
     /// <summary>Drop everything; used when a new session starts.</summary>
-    public void Clear() => _samples.Clear();
+    public void Clear()
+    {
+        _samples.Clear();
+        Revision++;
+    }
 
     /// <summary>Values for one series, oldest first, preserving gaps as null.</summary>
     public IReadOnlyList<double?> Values(MonitorSeries series) => series switch

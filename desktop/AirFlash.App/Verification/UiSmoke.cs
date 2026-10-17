@@ -222,6 +222,7 @@ internal static class UiSmoke
             // The fixture reports one send error, so loss is present and the badge must say so.
             Check(app.Health.Level == HealthLevel.Degraded, "monitor grades observed loss as degraded", checks);
             Check(app.HealthLabel == L.Get("Degraded") && app.HealthReason.Length > 0, "health badge pairs a label with its reason", checks);
+            Check(app.HealthPalette == "Error", "health badge exposes the current palette to theme triggers", checks);
             Check(app.MonitorTargetValue == "200" && app.MonitorRttValue == "4.2" && app.MonitorEstimatedValue == "163", "headline tiles expose bare figures for their units", checks);
             Check(app.MonitorBacklogged == "—" && app.MonitorDroppedBacklog == "—", "absent backpressure counters stay unknown rather than zero", checks);
             // The sampler records at most one sample per second, so only the first is
