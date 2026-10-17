@@ -87,6 +87,7 @@ func StartWithArgs(path string, args []string, handler Handler) (*Client, error)
 // StartWithOptions launches the engine with arguments and an environment.
 func StartWithOptions(path string, args []string, env []string, handler Handler) (*Client, error) {
 	cmd := exec.Command(path, args...)
+	hideConsole(cmd)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}
