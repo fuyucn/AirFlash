@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
@@ -274,5 +275,46 @@ func TestStoppingDoesNotWaitForTheRestore(t *testing.T) {
 		// Returned while the restore is still blocked, which is the point.
 	case <-time.After(2 * time.Second):
 		t.Fatal("stopStream waited for the restore: a slow audio service would stall the click")
+	}
+}
+
+// recordingTray watches the calls a tray menu is shown through, in order.
+type recordingTray struct {
+	calls []string
+}
+
+func (t *recordingTray) SetMenu(m *mygo.Menu) {
+	if m == nil {
+		t.calls = append(t.calls, "SetMenu(nil)")
+		return
+	}
+	t.calls = append(t.calls, "SetMenu(menu)")
+}
+
+func (t *recordingTray) PopUpMenu() { t.calls = append(t.calls, "PopUpMenu()") }
+
+func TestTheTrayMenuIsTakenOffTheIconAgain(t *testing.T) {
+	// The Windows backend answers a right click by showing whatever menu the
+	// icon holds, after it has reported the click. So a menu left on the icon
+	// is shown twice: once by the shell, and once by the backend as the
+	// callback returns. The second one opens the moment the user picks from
+	// the first, which reads as the menu coming back rather than the choice
+	// being taken - which is what the tray menu was reported to do.
+	tray := &recordingTray{}
+	app := &App{settings: settings.Open("/tmp/airflash-tray-menu.json")}
+	app.showTrayMenu(tray)
+
+	want := []string{"SetMenu(menu)", "PopUpMenu()", "SetMenu(nil)"}
+	if len(tray.calls) != len(want) {
+		t.Fatalf("calls = %v, want %v", tray.calls, want)
+	}
+	for i, call := range want {
+		if tray.calls[i] != call {
+			t.Fatalf("call %d = %q, want %q (all: %v)", i, tray.calls[i], call, tray.calls)
+		}
+	}
+	// A menu still on the icon would be shown a second time by the backend.
+	if tray.calls[len(tray.calls)-1] != "SetMenu(nil)" {
+		t.Errorf("the menu was left on the icon, so the backend shows it again: %v", tray.calls)
 	}
 }

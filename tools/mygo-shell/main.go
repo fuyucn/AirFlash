@@ -469,34 +469,74 @@ func (a *App) installTray() {
 		return
 	}
 	a.tray = tray
-	// On Linux a tray icon reports neither its position nor a double click, so
-	// both ways to open the panel collapse to the one that works there.
+	if runtime.GOOS == "linux" {
+		// A tray icon there is an AppIndicator, which reports no clicks at
+		// all - not a left one and not a right one - and shows a menu on the
+		// only gesture it does see. So the menu stays on the icon for good,
+		// and it is the menu that says how to reach the panel: there is no
+		// left click to hand that to.
+		tray.SetMenu(a.trayMenuItems())
+		return
+	}
 	tray.OnClick(a.togglePanel)
 	tray.OnRightClick(a.trayMenu)
+}
+
+// trayMenuHost is what a tray menu is shown through: the calls that make a
+// menu appear. It is an interface rather than *mygo.Tray so a test can watch
+// the order they are made in, which is the whole of the behaviour.
+type trayMenuHost interface {
+	SetMenu(m *mygo.Menu)
+	PopUpMenu()
 }
 
 // trayMenu is the icon's right-click menu: the way to the window and the way
 // out. The left click goes to the panel, so this is what the menu is for.
 func (a *App) trayMenu() {
-	// The menu is built once per right click and set on the icon before it is
-	// shown, which is what PopUpMenu shows: it has no arguments because it
-	// presents whatever menu the tray already holds.
-	a.tray.SetMenu(a.trayMenuItems())
-	a.tray.PopUpMenu()
+	a.showTrayMenu(a.tray)
+}
+
+// showTrayMenu sets a menu on the icon, shows it, and takes it off again.
+func (a *App) showTrayMenu(tray trayMenuHost) {
+	// The taking off is the part that matters. SetMenu stores the menu on the
+	// icon and the Windows backend answers a right click by showing whatever
+	// menu the icon holds - after it has reported the click - so a menu left
+	// on the icon is shown twice: once here, and once by the backend as this
+	// callback returns. The second one appears the moment the user chooses
+	// from the first, which reads as the menu coming back rather than the
+	// choice being taken.
+	//
+	// PopUpMenu has no arguments because it presents the menu the tray already
+	// holds, so the menu has to be set for as long as it is being shown.
+	tray.SetMenu(a.trayMenuItems())
+	defer tray.SetMenu(nil)
+	tray.PopUpMenu()
 }
 
 // trayMenuItems is the right-click menu: the way to the window and the way out.
 func (a *App) trayMenuItems() *mygo.Menu {
-	return mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Stats", Click: func(*mygo.MenuItem, *mygo.Window) {
-			a.openWindow("stats")
+	items := []*mygo.MenuItem{}
+	if runtime.GOOS == "linux" {
+		// A tray icon on Linux reports no click at all, so the left click that
+		// opens the panel elsewhere is an item here.
+		items = append(items, &mygo.MenuItem{
+			Label: "Open AirFlash",
+			Click: func(*mygo.MenuItem, *mygo.Window) { a.togglePanel() },
+		}, mygo.Separator())
+	}
+
+	window := func(page string) *mygo.MenuItem {
+		return &mygo.MenuItem{Label: page, Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.openWindow(page)
+		}}
+	}
+	return mygo.NewMenu(append(items,
+		window("Stats"), window("Settings"),
+		mygo.Separator(),
+		&mygo.MenuItem{Label: "Quit", Click: func(*mygo.MenuItem, *mygo.Window) {
+			mygo.App.Quit()
 		}},
-		{Label: "Settings", Click: func(*mygo.MenuItem, *mygo.Window) {
-			a.openWindow("settings")
-		}},
-		{Type: mygo.MenuItemSeparator},
-		{Label: "Quit", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
-	})
+	))
 }
 
 // adaptedTarget is the latency the shell worked out from previous sessions.

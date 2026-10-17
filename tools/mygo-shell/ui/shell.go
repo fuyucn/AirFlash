@@ -210,32 +210,35 @@ func (s *Shell) View(c *ui.Context) {
 // sliver, and the sidebar is the first thing to go when the window is small; a
 // bar that wraps and shrinks does not.
 func (s *Shell) topBar(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
-	bar := ui.Row(c).FillWidth().Padding(10, 18).Gap(18).Radius(0).
+	bar := ui.Row(c).FillWidth().Height(38).Shrink(0).
+		Padding(10, 18).Gap(18).Radius(0).
 		Background(p.Surface)
 	// The rule is under the bar, so the menu and the content meet at a dashed
 	// line rather than at a change of tone alone.
 	bar.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
-	ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
-		LetterSpacing(1.2)
+	bar.Children(func() {
+		ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
+			LetterSpacing(1.2)
 
-	ui.Row(c).Grow(1).Gap(4).Children(func() {
-		s.navItem(c, p, s.t("Receivers"), pageReceivers)
-		s.navItem(c, p, s.t("Stats"), pageStats)
-		s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
-		s.navItem(c, p, s.t("Settings"), pageSettings)
-	})
+		ui.Row(c).Grow(1).Gap(4).Children(func() {
+			s.navItem(c, p, s.t("Receivers"), pageReceivers)
+			s.navItem(c, p, s.t("Stats"), pageStats)
+			s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
+			s.navItem(c, p, s.t("Settings"), pageSettings)
+		})
 
-	// The engine's own state, always visible: whether audio is flowing is the
-	// one fact the user needs at a glance.
-	label, col := phaseLabel(s.deps.Words, p, st.Phase)
-	ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-		ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
-		ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
-		if cfg.Mode == settings.ModeLightweight {
-			ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).TextColor(p.InkMuted).
-				LetterSpacing(0.9)
-		}
+		// The engine's own state, always visible: whether audio is flowing is the
+		// one fact the user needs at a glance.
+		label, col := phaseLabel(s.deps.Words, p, st.Phase)
+		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
+			ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
+			if cfg.Mode == settings.ModeLightweight {
+				ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).TextColor(p.InkMuted).
+					LetterSpacing(0.9)
+			}
+		})
 	})
 }
 
