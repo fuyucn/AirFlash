@@ -413,3 +413,30 @@ func TestTheSettingIsStoredAndReloaded(t *testing.T) {
 		t.Error("OpenAtLaunch did not survive a reload")
 	}
 }
+
+func TestEveryBoundedFieldIsBounded(t *testing.T) {
+	// Three fields are clamped, and the rule for all three comes from the engine's
+	// validation. A clamp applied to one and forgotten on another is the failure
+	// this guards, so all three are driven past both ends here.
+	s := Settings{
+		LatencyMs:         -50,
+		Gain:              4,
+		ReconnectAttempts: 9999,
+	}
+	got := s.normalized()
+	if got.LatencyMs < minLatencyMs || got.LatencyMs > maxLatencyMs {
+		t.Errorf("latency = %d, outside %d..%d", got.LatencyMs, minLatencyMs, maxLatencyMs)
+	}
+	if got.Gain < 0 || got.Gain > 1 {
+		t.Errorf("gain = %v, outside 0..1", got.Gain)
+	}
+	if got.ReconnectAttempts < 1 || got.ReconnectAttempts > 20 {
+		t.Errorf("attempts = %d, outside 1..20", got.ReconnectAttempts)
+	}
+
+	// And the same at the other end, so a ceiling is not the only side bound.
+	low := Settings{LatencyMs: 0, Gain: -1, ReconnectAttempts: 0}.normalized()
+	if low.LatencyMs < minLatencyMs || low.Gain < 0 || low.ReconnectAttempts < 1 {
+		t.Errorf("a value below every floor was not raised: %+v", low)
+	}
+}

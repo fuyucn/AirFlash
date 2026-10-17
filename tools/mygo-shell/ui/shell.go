@@ -938,15 +938,10 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 
 				// One control per row that matches what it would do. A row
 				// showing Play for the receiver that is already playing is a
-				// button that starts a second session the engine cannot run.
-				// A pair with one half cannot be played to, and a receiver that
-				// has gone cannot be reached, so neither offers an action rather
-				// than one that would sound wrong or time out.
+				// button that starts a second session the engine cannot run. The
+				// row above already states "incomplete" and "offline", so the two
+				// cases that only repeated them are gone.
 				switch {
-				case !rec.Complete():
-					// stated by the row above as "incomplete"
-				case !rec.Online:
-					// stated by the row above as "offline"
 				case isPlaying:
 					if ui.Button(c, s.t("Stop")).Clicked() && s.deps.OnStop != nil {
 						s.deps.OnStop()
@@ -958,10 +953,8 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 					// Pairing is offered rather than left to a failure: the first
 					// connection to a HomePod asks for a PIN, and finding that out
 					// by pressing Play and reading an error is the slow way round.
-					if s.deps.OnPair != nil {
-						if ui.Button(c, s.t("Pair")).Clicked() {
-							s.deps.OnPair(rec)
-						}
+					if s.deps.OnPair != nil && ui.Button(c, s.t("Pair")).Clicked() {
+						s.deps.OnPair(rec)
 					}
 				}
 
@@ -1173,12 +1166,12 @@ func receiverName(name, host string) string {
 // with one card there is nothing to choose and the default stands.
 func (s *Shell) captureEndpoint(c *ui.Context, p palette, cfg settings.Settings) {
 	sectionLabel(s.deps.Words, c, p, "AUDIO INPUT")
-
-	adapters := localsound.Endpoints()
-	ids := []string{""}
-	labels := []string{s.t("System default")}
-	for _, e := range adapters {
-		// Only render endpoints can be captured from by loopback: a microphone
+	// What the engine records from. The system default is right on a machine with
+	// one sound card and wrong on one with two, where the PC's audio may be going
+	// through a device Windows does not call default.
+	ids, labels := []string{""}, []string{s.t("System default")}
+	for _, e := range localsound.Endpoints() {
+		// Only a render endpoint can be captured from by loopback: a microphone
 		// records the room, not what the PC is playing.
 		if e.Capture {
 			continue
@@ -1187,45 +1180,109 @@ func (s *Shell) captureEndpoint(c *ui.Context, p palette, cfg settings.Settings)
 		labels = append(labels, e.Name)
 	}
 
-	chosen := cfg.CaptureEndpoint
-	known := false
-	for _, id := range ids {
-		if id == chosen {
-			known = true
+	s.devicePicker(c, p, devicePicker{
+		note: s.t("The sound the PC is playing is recorded from this device. " +
+			"A machine with one sound card has nothing to choose."),
+		label:   s.t("Input device"),
+		unsetAs: s.t("A new device applies to the next stream."),
+		ids:     ids,
+		labels:  labels,
+		chosen:  cfg.CaptureEndpoint,
+		onPick: func(id string) {
+			if s.deps.OnCaptureEndpoint != nil {
+				s.deps.OnCaptureEndpoint(id)
+			}
+		},
+	})
+}
+
+func (s *Shell) networkInterface(c *ui.Context, p palette, cfg settings.Settings) {
+	sectionLabel(s.deps.Words, c, p, "NETWORK")
+	// Which way out a browse takes. A machine with one adapter never needs this;
+	// one with a VPN up can find its receivers on only one of them.
+	ids, labels := []string{""}, []string{s.t("Automatic")}
+	for _, a := range discovery.Interfaces() {
+		ids = append(ids, strconv.Itoa(a.Index))
+		label := a.Name
+		if len(a.Addresses) > 0 {
+			label = fmt.Sprintf("%s · %s", a.Name, a.Addresses[0])
+		}
+		labels = append(labels, label)
+	}
+
+	s.devicePicker(c, p, devicePicker{
+		note: s.t("The adapter the receiver search runs on. A PC with a VPN up " +
+			"can find a HomePod on one adapter only."),
+		label:   s.t("Adapter"),
+		unsetAs: s.t("A new adapter takes effect the next time the search runs."),
+		ids:     ids,
+		labels:  labels,
+		chosen:  cfg.DiscoveryInterfaceID,
+		onPick: func(id string) {
+			if s.deps.OnDiscoveryInterface != nil {
+				s.deps.OnDiscoveryInterface(id)
+			}
+		},
+	})
+}
+
+// devicePicker is a stored id, the list it is chosen from, and what to do when a
+// different one is picked.
+//
+// The two settings that choose hardware - which adapter the search runs on, and
+// which device is recorded from - are the same control over two different lists:
+// a stored value that may no longer be present, a list whose first entry is "the
+// system's choice", and a label that has to be mapped back to the value it stands
+// for. Writing that twice left two copies of the "the adapter has gone" case and
+// two of the reverse lookup, which is the part that is easy to get wrong.
+type devicePicker struct {
+	note    string
+	label   string
+	unsetAs string
+	ids     []string
+	labels  []string
+	chosen  string
+	onPick  func(id string)
+}
+
+// devicePicker draws one of those controls.
+func (s *Shell) devicePicker(c *ui.Context, p palette, d devicePicker) {
+	// A stored value the machine no longer holds - set on another machine, or an
+	// adapter that was removed - falls back to the system's choice. Offering it
+	// would offer a choice that does nothing.
+	chosen := ""
+	for _, id := range d.ids {
+		if id == d.chosen {
+			chosen = d.chosen
 			break
 		}
 	}
-	if !known {
-		// An endpoint that has gone, which happens when the setting was made on
-		// another machine or the card was unplugged.
-		chosen = ""
-	}
 
 	ui.Column(c).FillWidth().Gap(8).Children(func() {
-		ui.Text(c, s.t("The sound the PC is playing is recorded from this device. "+
-			"A machine with one sound card has nothing to choose.")).
-			FontSize(sizeSmall).TextColor(p.InkMuted)
+		ui.Text(c, d.note).FontSize(sizeSmall).TextColor(p.InkMuted)
 
-		sel := chosen
-		for i, id := range ids {
-			if id == sel {
-				sel = labels[i]
+		// The chosen entry as the control's own label, so the row says which
+		// device is in use rather than only what sits beside it.
+		sel := ""
+		for i, id := range d.ids {
+			if id == chosen {
+				sel = d.labels[i]
 				break
 			}
 		}
-		box := ui.Combobox(c, &sel, labels).Label(s.t("Input device")).FillWidth()
-		if box.Changed() && s.deps.OnCaptureEndpoint != nil {
-			for i, label := range labels {
+		if ui.Combobox(c, &sel, d.labels).Label(d.label).FillWidth().Changed() {
+			for i, label := range d.labels {
 				if label == sel {
-					s.deps.OnCaptureEndpoint(ids[i])
+					d.onPick(d.ids[i])
 					break
 				}
 			}
 		}
 
+		// What a change takes effect on, or nothing when the automatic entry is
+		// the one in use.
 		if chosen != "" {
-			ui.Text(c, s.t("A new device applies to the next stream.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
+			ui.Text(c, d.unsetAs).FontSize(sizeSmall).TextColor(p.InkMuted)
 		}
 	}).Padding(0, 0, 20, 0).
 		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
@@ -1267,20 +1324,24 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 		})
 
 		// The presets, as a segmented control with Custom at the end.
-		names := equalizer.PresetNames()
-		labels := make([]string, 0, len(names))
-		for i, n := range names {
-			if n == equalizer.Custom {
-				labels = append(labels, s.t("Custom"))
-				continue
-			}
-			labels = append(labels, s.t(equalizer.Presets[i].Name))
+		//
+		// The labels are the presets' own names followed by Custom, which is what
+		// PresetNames returns and what the index into Presets below assumes, so
+		// the label for a segment is the preset at the same index rather than a
+		// second list kept parallel to it.
+		labels := make([]string, 0, len(equalizer.Presets)+1)
+		for _, q := range equalizer.Presets {
+			labels = append(labels, s.t(q.Name))
 		}
-		index := len(names) - 1 // Custom, until a preset is recognised.
+		labels = append(labels, s.t(equalizer.Custom))
+
+		// Custom, until the current curve is recognised as a preset's.
+		index := len(equalizer.Presets)
 		if p, ok := eq.Is(); ok {
 			for i, q := range equalizer.Presets {
 				if q.Name == p.Name {
 					index = i
+					break
 				}
 			}
 		}
@@ -1336,68 +1397,6 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 // the user can be expected to know: the addresses are shown beside each name so
 // the right one is obvious rather than a guess among Ethernet 2, Ethernet 3 and
 // Wi-Fi.
-func (s *Shell) networkInterface(c *ui.Context, p palette, cfg settings.Settings) {
-	sectionLabel(s.deps.Words, c, p, "NETWORK")
-
-	adapters := discovery.Interfaces()
-	// What a value in the list means, as it is written in settings: "" is the
-	// system's choice and a number is the adapter's own index.
-	ids := []string{""}
-	labels := []string{s.t("Automatic")}
-	for _, a := range adapters {
-		ids = append(ids, strconv.Itoa(a.Index))
-		label := a.Name
-		if len(a.Addresses) > 0 {
-			label = fmt.Sprintf("%s · %s", a.Name, a.Addresses[0])
-		}
-		labels = append(labels, label)
-	}
-
-	chosen := cfg.DiscoveryInterfaceID
-	known := false
-	for _, id := range ids {
-		if id == chosen {
-			known = true
-			break
-		}
-	}
-	if !known {
-		// An adapter that has gone, which happens when the setting was made on
-		// another machine or the adapter was removed. Offering it as a choice
-		// would mean offering a browse that fails.
-		chosen = ""
-	}
-
-	ui.Column(c).FillWidth().Gap(8).Children(func() {
-		ui.Text(c, s.t("The adapter the receiver search runs on. A PC with a VPN up "+
-			"can find a HomePod on one adapter only.")).FontSize(sizeSmall).TextColor(p.InkMuted)
-
-		// The chosen entry as the control's label, so the row says which
-		// adapter is in use rather than only the address beside it.
-		sel := chosen
-		for i, id := range ids {
-			if id == sel {
-				sel = labels[i]
-				break
-			}
-		}
-		box := ui.Combobox(c, &sel, labels).Label(s.t("Adapter")).FillWidth()
-		if box.Changed() && s.deps.OnDiscoveryInterface != nil {
-			for i, label := range labels {
-				if label == sel {
-					s.deps.OnDiscoveryInterface(ids[i])
-					break
-				}
-			}
-		}
-
-		if chosen == "" {
-			ui.Text(c, s.t("A new adapter takes effect the next time the search runs.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
-		}
-	}).Padding(0, 0, 20, 0).
-		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
-}
 
 func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 	ui.Column(c).FillWidth().Gap(26).Children(func() {

@@ -239,6 +239,20 @@ func (s *Store) Update(fn func(*Settings)) Settings {
 	return cur
 }
 
+// clamp keeps a value inside the range the engine accepts, and is the one place
+// a floor and a ceiling are applied: three fields are bounded, and writing the
+// same pair of comparisons out three times is where a bound gets applied to one
+// of them and forgotten on the others.
+func clamp[T int | float64](v T, lo, hi T) T {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 // normalized keeps the values inside the ranges the engine accepts.
 func (s Settings) normalized() Settings {
 	if s.Mode != ModeLightweight {
@@ -247,18 +261,8 @@ func (s Settings) normalized() Settings {
 	// The engine's own range, 0..2000 (session.rs asserts it). The floor used to
 	// be 200 here, which silently raised Real-time's 120 ms to 200 and made the
 	// desktop's most aggressive mode unavailable through the shell.
-	if s.LatencyMs < minLatencyMs {
-		s.LatencyMs = minLatencyMs
-	}
-	if s.LatencyMs > maxLatencyMs {
-		s.LatencyMs = maxLatencyMs
-	}
-	if s.Gain < 0 {
-		s.Gain = 0
-	}
-	if s.Gain > 1 {
-		s.Gain = 1
-	}
+	s.LatencyMs = clamp(s.LatencyMs, minLatencyMs, maxLatencyMs)
+	s.Gain = clamp(s.Gain, 0, 1)
 	switch s.SampleRate {
 	case 44100, 48000:
 	default:
@@ -280,12 +284,7 @@ func (s Settings) normalized() Settings {
 	}
 	// The desktop host bounds retries at twenty; one is a single attempt with no
 	// retry behind it.
-	if s.ReconnectAttempts < 1 {
-		s.ReconnectAttempts = 1
-	}
-	if s.ReconnectAttempts > 20 {
-		s.ReconnectAttempts = 20
-	}
+	s.ReconnectAttempts = clamp(s.ReconnectAttempts, 1, 20)
 	if len(s.Sessions) > maxSessions {
 		s.Sessions = s.Sessions[len(s.Sessions)-maxSessions:]
 	}

@@ -343,15 +343,7 @@ func (a *App) openWindow(page string) {
 			a.settings.Update(func(s *settings.Settings) { s.SetAlias(id, name) })
 			a.repaint()
 		},
-		OnPairPin: func(pin string) {
-			c := a.client.Load()
-			if c == nil || !c.Running() {
-				return
-			}
-			if _, err := c.PairPin(pin); err != nil {
-				log.Printf("pair pin: %v", err)
-			}
-		},
+		OnPairPin: a.pairPin,
 		OnPair: func(r discovery.Receiver) {
 			a.pair(r)
 		},
@@ -613,17 +605,9 @@ func (a *App) panelView() *appui.Panel {
 			}
 		},
 		OnDeviceVolume: a.setDeviceVolume,
-		OnPairPin: func(pin string) {
-			c := a.client.Load()
-			if c == nil || !c.Running() {
-				return
-			}
-			if _, err := c.PairPin(pin); err != nil {
-				log.Printf("pair pin: %v", err)
-			}
-		},
-		OnOpenWindow: a.openWindow,
-		OnQuit:       func() { mygo.App.Quit() },
+		OnPairPin:      a.pairPin,
+		OnOpenWindow:   a.openWindow,
+		OnQuit:         func() { mygo.App.Quit() },
 	})
 }
 
@@ -702,6 +686,20 @@ func (a *App) pair(r discovery.Receiver) {
 	// receiver's and a pair shares them.
 	if _, err := c.Pair(peers[0]); err != nil {
 		log.Printf("pair: %v", err)
+	}
+}
+
+// pairPin sends the PIN the receiver asked for, which completes pairing.
+//
+// Both surfaces ask for it - the panel's prompt and the window's - and both send
+// it the same way, so it is one method rather than two copies.
+func (a *App) pairPin(pin string) {
+	c := a.client.Load()
+	if c == nil || !c.Running() {
+		return
+	}
+	if _, err := c.PairPin(pin); err != nil {
+		log.Printf("pair pin: %v", err)
 	}
 }
 

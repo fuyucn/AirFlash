@@ -80,10 +80,12 @@ type device struct {
 // can be tested without a network.
 func Fold(records []Record) []Receiver {
 	byID := map[string]*device{}
-	// byEndpoint is the address each folded device was first seen at, which is
-	// what tells two records of one device apart from records of two devices that
-	// happen to share an id.
-	byEndpoint := map[string]string{}
+	// byAddress is the id each address was first folded under, which is what tells
+	// two records of one device apart from records of two devices that happen to
+	// share an id. It is a map rather than a scan of the ids so far, because a
+	// browse holds a record per service type per device and the lookup happens
+	// once per record.
+	byAddress := map[string]string{}
 	var order []string
 
 	for _, rec := range ordered(records) {
@@ -98,18 +100,15 @@ func Fold(records []Record) []Receiver {
 		// for each. The address is the one thing every record of a device agrees
 		// on, so it decides when the ids do not.
 		if id != endpoint(rec) {
-			for _, seen := range order {
-				if byEndpoint[seen] == rec.Address {
-					id = seen
-					break
-				}
+			if seen, ok := byAddress[rec.Address]; ok {
+				id = seen
 			}
 		}
 		d, ok := byID[id]
 		if !ok {
 			d = &device{id: id}
 			byID[id] = d
-			byEndpoint[id] = rec.Address
+			byAddress[rec.Address] = id
 			order = append(order, id)
 		}
 		d.records = append(d.records, rec)

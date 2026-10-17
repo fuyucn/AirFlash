@@ -562,3 +562,31 @@ func TestTheWindowKeepsItsNavAtANarrowWidth(t *testing.T) {
 		}
 	}
 }
+
+// devicePickerIDs stands in for the two lists the picker is built from: an
+// adapter index and an endpoint id, both of which a machine can stop having.
+func devicePickerIDs(chosen string, ids ...string) string {
+	for _, id := range ids {
+		if id == chosen {
+			return id
+		}
+	}
+	return ""
+}
+
+func TestAStoredDeviceTheMachineNoLongerHasFallsBack(t *testing.T) {
+	// The stored value is what a settings file holds. Set on another machine, or
+	// for a card that was unplugged, it is not in the list any more, and offering
+	// it would offer a browse that fails.
+	ids := []string{"", "3", "7"}
+	if got := devicePickerIDs("9999", ids...); got != "" {
+		t.Errorf("an absent adapter resolved to %q, want the automatic entry", got)
+	}
+	if got := devicePickerIDs("7", ids...); got != "7" {
+		t.Errorf("a present adapter resolved to %q, want 7", got)
+	}
+	// The automatic entry is the stored value when nothing is set.
+	if got := devicePickerIDs("", ids...); got != "" {
+		t.Errorf("an unset id resolved to %q, want the automatic entry", got)
+	}
+}

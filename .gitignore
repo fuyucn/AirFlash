@@ -58,3 +58,9 @@ AGENTS.md
 *.pfx
 *.key
 *.dmp
+
+# the optimize-loop's working directory: snapshots and its ledger
+/sandbox/
+
+# the optimize-loop's binding for the current run
+/loop.run.yaml
