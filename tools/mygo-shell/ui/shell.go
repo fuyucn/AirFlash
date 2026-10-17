@@ -950,12 +950,6 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 					if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
 						s.deps.OnPlay(rec)
 					}
-					// Pairing is offered rather than left to a failure: the first
-					// connection to a HomePod asks for a PIN, and finding that out
-					// by pressing Play and reading an error is the slow way round.
-					if s.deps.OnPair != nil && ui.Button(c, s.t("Pair")).Clicked() {
-						s.deps.OnPair(rec)
-					}
 				}
 
 				// The way to a receiver's own settings. Always there, rather than
@@ -1032,9 +1026,25 @@ func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings,
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
+		// Pairing, offered here rather than on the row.
+		//
+		// The engine's pair takes over whatever session is running and cancels it,
+		// so a Pair next to a row that is streaming stops the audio the user is
+		// listening to in order to ask them for a PIN. It belongs among a
+		// receiver's own controls, where it is plainly about that one device, and
+		// the panel's prompt is where the answer goes.
+		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+			sectionLabel(s.deps.Words, c, p, "PAIRING")
+			ui.Text(c, s.t("Pair this receiver with this PC. A receiver already paired "+
+				"does not need it again.")).FontSize(sizeSmall).Grow(1).TextColor(p.InkMuted)
+			if s.deps.OnPair != nil && ui.Button(c, s.t("Pair")).Clicked() {
+				s.deps.OnPair(rec)
+			}
+		})
+
 		// What the user calls it. The name the device reports is whatever was
 		// typed into the Home app, which cannot be changed from here; an alias
-		// can, and it is what the panel shows instead.
+		// can, and it is what we show instead.
 		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 			sectionLabel(s.deps.Words, c, p, "NAME")
 			alias := cfg.AliasFor(rec.ID)

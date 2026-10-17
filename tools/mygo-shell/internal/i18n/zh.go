@@ -106,8 +106,9 @@ var chinese = map[string]string{
 	"Off by default: the app starts in the tray and opens its panel. Starting with the machine always stays quiet, here or not.": "默认关闭：程序启动后驻留托盘并弹出面板。开机自启始终静默，与此设置无关。",
 
 	// Pairing.
-	"Pairing":                   "配对",
-	"Pair":                      "配对",
+	"Pairing": "配对",
+	"Pair":    "配对",
+	"Pair this receiver with this PC. A receiver already paired does not need it again.": "把这台设备和这台电脑配对。已经配对过的设备不需要再来一次。",
 	"Enter the PIN shown on %s": "请输入 %s 上显示的 PIN",
 	"The PIN is on the HomePod's own screen, under the speaker's name. The engine waits for a few minutes.": "PIN 显示在 HomePod 自己的屏幕上，位于音箱名称下方。引擎会等几分钟。",
 

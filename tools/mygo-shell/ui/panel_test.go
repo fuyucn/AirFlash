@@ -590,3 +590,67 @@ func TestAStoredDeviceTheMachineNoLongerHasFallsBack(t *testing.T) {
 		t.Errorf("an unset id resolved to %q, want the automatic entry", got)
 	}
 }
+
+func TestPairIsNotOfferedNextToAStreamingRow(t *testing.T) {
+	// The engine's pair takes over whatever session is running and cancels it, so a
+	// Pair beside a row that is streaming stops the audio in order to ask for a
+	// PIN. Pairing is a receiver's own control, not something offered per row.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+	studio := receiver("BB", "Studio", "10.0.10.44")
+	paired := 0
+	view := New(Deps{
+		State:           streamingState(),
+		Settings:        settings.Open("/tmp/airflash-pair-placement.json"),
+		Life:            shell.New(),
+		Receivers:       func() []discovery.Receiver { return []discovery.Receiver{living, studio} },
+		PlayingReceiver: func() *discovery.Receiver { return &living },
+		OnPair:          func(r discovery.Receiver) { paired++ },
+	})
+	view.SetPage("receivers")
+	tester := ui.NewTester(view.View, 880, 1100)
+
+	// Living Room is playing, so its row shows Stop.
+	if !tester.HasText("Stop") {
+		t.Error("the playing row offers no Stop")
+	}
+	// Studio is not playing, and its row must not offer Pair: pairing takes over
+	// the running session and cancels it, so a Pair on any row while something is
+	// streaming stops the audio the user is listening to.
+	for _, text := range tester.Texts() {
+		if text == "Pair" {
+			t.Error("Pair is offered while a stream is running, which cancels it")
+		}
+	}
+	if paired != 0 {
+		t.Errorf("pair fired %d times with no intent, want none", paired)
+	}
+}
+
+func TestPairIsOfferedInTheReceiversOwnControls(t *testing.T) {
+	// Where it belongs: among a receiver's own controls, so it is plainly about
+	// that one device and not something that fires while something else plays.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+	paired := 0
+	view := New(Deps{
+		Words:           i18n.For(i18n.English),
+		State:           streamingState(),
+		Settings:        settings.Open("/tmp/airflash-pair-controls.json"),
+		Life:            shell.New(),
+		Receivers:       func() []discovery.Receiver { return []discovery.Receiver{living} },
+		PlayingReceiver: func() *discovery.Receiver { return &living },
+		OnPair:          func(r discovery.Receiver) { paired++ },
+	})
+	view.SetPage("receivers")
+	view.tuning = living.ID
+	tester := ui.NewTester(view.View, 880, 900)
+
+	if !tester.HasText("Pair") {
+		t.Fatal("the receiver's own controls offer no Pair")
+	}
+	if err := tester.Click("Pair"); err != nil {
+		t.Fatal(err)
+	}
+	if paired != 1 {
+		t.Errorf("Pair fired %d times, want once", paired)
+	}
+}
