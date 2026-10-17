@@ -80,6 +80,9 @@ type Deps struct {
 	OnReconnectAttempts func(int)
 	// OnMuteWhileStreaming silences the local speakers while a stream runs.
 	OnMuteWhileStreaming func(bool)
+	// OnOpenAtLaunch decides whether a launch by hand shows the window instead
+	// of the tray panel.
+	OnOpenAtLaunch func(bool)
 	// OnCaptureEndpoint changes which audio endpoint the engine records from.
 	OnCaptureEndpoint func(id string)
 	// OnOpenWindow opens the main window on a named page, which is how the
@@ -104,9 +107,12 @@ type Deps struct {
 // page identifies the content shown beside the sidebar.
 type page int
 
+// The order is the order the menu shows them, and pageReceivers is first so the
+// zero value of a page - a Shell that has not been told which page to show -
+// opens on the receivers, which is what the window is opened for.
 const (
-	pageStats page = iota
-	pageReceivers
+	pageReceivers page = iota
+	pageStats
 	pageEqualizer
 	pageSettings
 )
@@ -159,8 +165,14 @@ func (s *Shell) SetPage(name string) {
 		s.page = pageEqualizer
 	case "settings":
 		s.page = pageSettings
-	default:
+	case "stats":
 		s.page = pageStats
+	default:
+		// Receivers is the first page, not Stats: the window is opened to choose
+		// what to play to or to look at a device, and Stats is a reading one
+		// finds after. The panel is the main surface and answers "what am I
+		// playing to"; the window answers "which one, and why is it stuttering".
+		s.page = pageReceivers
 	}
 }
 
@@ -180,55 +192,60 @@ func (s *Shell) View(c *ui.Context) {
 	c.SetTheme(themeFor(p, isDark))
 	c.Root().Background(p.Ground)
 
-	ui.Row(c).Fill().Children(func() {
-		s.sidebar(c, p, cfg)
-		ui.Column(c).Grow(1).FillHeight().Children(func() {
-			s.content(c, p, cfg, st)
-		})
+	// A top bar over the content, not a sidebar beside it. A horizontal menu is
+	// what a narrow window keeps: a 196 DIP sidebar beside a 400 DIP viewport
+	// leaves the page a sliver, and on a small window the sidebar is the first
+	// thing to go.
+	ui.Column(c).Fill().Children(func() {
+		s.topBar(c, p, cfg, st)
+		s.content(c, p, cfg, st)
 	})
 }
 
-// sidebar is the navigation column: a block of one tone step, divided from the
-// content by a dashed rule.
-func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
-	bar := ui.Column(c).Width(196).FillHeight().Padding(14).Gap(2).Radius(0)
-	bar.Background(p.Surface)
-	// The rule is on the content side of the seam, so the two blocks meet at a
-	// dashed line rather than at a change of tone alone.
-	bar.BorderWidth(0, 1, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
-	bar.Children(func() {
-		ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
-			LetterSpacing(1.2).Padding(4, 4, 16, 4)
+// topBar is the horizontal menu: the product name, the pages, and the engine's
+// state, in one row above the content.
+//
+// It is a Row rather than a Column because a top bar is what a narrow window
+// keeps. A sidebar of a fixed width beside a 400 DIP viewport leaves the page a
+// sliver, and the sidebar is the first thing to go when the window is small; a
+// bar that wraps and shrinks does not.
+func (s *Shell) topBar(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+	bar := ui.Row(c).FillWidth().Padding(10, 18).Gap(18).Radius(0).
+		Background(p.Surface)
+	// The rule is under the bar, so the menu and the content meet at a dashed
+	// line rather than at a change of tone alone.
+	bar.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
-		s.navItem(c, p, s.t("Stats"), pageStats)
+	ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
+		LetterSpacing(1.2)
+
+	ui.Row(c).Grow(1).Gap(4).Children(func() {
 		s.navItem(c, p, s.t("Receivers"), pageReceivers)
+		s.navItem(c, p, s.t("Stats"), pageStats)
 		s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
 		s.navItem(c, p, s.t("Settings"), pageSettings)
+	})
 
-		ui.Spacer(c).Grow(1)
-
-		// The engine's own state, always visible: whether audio is flowing is
-		// the one fact the user needs at a glance.
-		st := s.deps.State.Snapshot()
-		label, col := phaseLabel(s.deps.Words, p, st.Phase)
-		ui.Column(c).Padding(8, 4, 4, 4).Gap(4).Children(func() {
-			ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
-				ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
-			})
-			if cfg.Mode == settings.ModeLightweight {
-				ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).TextColor(p.InkMuted).
-					LetterSpacing(0.9)
-			}
-		}).BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+	// The engine's own state, always visible: whether audio is flowing is the
+	// one fact the user needs at a glance.
+	label, col := phaseLabel(s.deps.Words, p, st.Phase)
+	ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+		ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
+		ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
+		if cfg.Mode == settings.ModeLightweight {
+			ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).TextColor(p.InkMuted).
+				LetterSpacing(0.9)
+		}
 	})
 }
 
 func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 	selected := s.page == target
 	// Selection is shown by a step in tone, not by the accent: the accent is
-	// reserved for the action and the live reading, so it keeps its meaning.
-	row := ui.Row(c).FillWidth().Padding(8, 9).Radius(0).Gap(8)
+	// reserved for the action and the live reading, so it keeps its meaning. A
+	// tab of a menu sits beside the others rather than filling the bar, so it is
+	// sized to its label rather than stretched.
+	row := ui.Row(c).Padding(6, 10).Radius(0).Gap(8).AlignItems(ui.Center)
 	if selected {
 		row.Background(p.SurfaceHi)
 	}
@@ -239,7 +256,8 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 		}
 		ui.Text(c, label).FontSize(sizeSmall).TextColor(col)
 		if selected {
-			ui.Spacer(c).Grow(1)
+			// The mark that says which tab is open, beside the label rather than
+			// pushed to the far end of the bar.
 			ui.Box(c).Width(6).Height(6).Radius(0).Background(p.Accent)
 		}
 	})
@@ -255,7 +273,7 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 		case pageStats:
 			s.statsPage(c, p, cfg, st)
 		case pageReceivers:
-			s.receiversPage(c, p, cfg)
+			s.receiversPage(c, p, cfg, st)
 		case pageEqualizer:
 			s.equalizerPage(c, p, cfg)
 		case pageSettings:
@@ -675,38 +693,11 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 		// number depends on the network at the time, which the user cannot know.
 		s.latencyControl(c, p, cfg, st)
 
-		// One action, on its own, where the eye ends after reading the numbers.
-		ui.Row(c).Gap(10).Children(func() {
-			streaming := st.Phase == engine.PhaseStreaming
-			label := "Play"
-			if streaming {
-				label = "Stop"
-			}
-			// It acts on the receiver that is playing, not on the first one
-			// discovery listed: those are different devices as often as not,
-			// and stopping the wrong one is worse than offering nothing.
-			action := ui.PrimaryButton(c, label)
-			if playing := s.playingReceiver(); playing != nil {
-				// A hint says which device the button is about, which a bare
-				// verb never answers.
-				action.Tooltip("Stop streaming to " + playing.Name)
-			}
-			if action.Clicked() {
-				switch {
-				case streaming:
-					if s.deps.OnStop != nil {
-						s.deps.OnStop()
-					}
-				case s.deps.PlayingReceiver != nil:
-					// Nothing is playing: start on the one the panel last
-					// played to, so the window and the panel act on the same
-					// device rather than on whichever came up first.
-					if rec := s.deps.PlayingReceiver(); rec != nil && s.deps.OnPlay != nil {
-						s.deps.OnPlay(*rec)
-					}
-				}
-			}
-		})
+		// No Play or Stop here. A Stats page is for reading what the numbers
+		// are; which receiver to play to is the panel's and the Receivers page's
+		// question, and both name the device they act on. A button here could
+		// only act on whatever was last played to, which reads as "play to I
+		// don't know what".
 	})
 }
 
@@ -888,7 +879,7 @@ func (s *Shell) countRow(c *ui.Context, p palette, label string, value uint64) {
 	})
 }
 
-func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
+func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	var found []discovery.Receiver
 	if s.deps.Receivers != nil {
 		found = s.deps.Receivers()
@@ -902,8 +893,19 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 			return
 		}
 
+		// Which receiver the engine is streaming to, so a row can say Stop for
+		// it rather than a Play that would start a second session the engine
+		// cannot run.
+		playingID := ""
+		if st.Phase == engine.PhaseStreaming {
+			if rec := s.playingReceiver(); rec != nil {
+				playingID = rec.ID
+			}
+		}
+
 		for _, r := range found {
 			rec := r
+			isPlaying := rec.ID == playingID && playingID != ""
 			row := ui.Row(c).FillWidth().Padding(14, 2).Gap(12).Radius(0)
 			row.Children(func() {
 				ui.Column(c).Gap(3).Children(func() {
@@ -934,20 +936,35 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 
 				ui.Spacer(c).Grow(1)
 
+				// One control per row that matches what it would do. A row
+				// showing Play for the receiver that is already playing is a
+				// button that starts a second session the engine cannot run.
 				// A pair with one half cannot be played to, and a receiver that
-				// has gone cannot be reached, so neither offers an action
-				// rather than one that would sound wrong or time out.
-				if rec.Complete() && rec.Online {
+				// has gone cannot be reached, so neither offers an action rather
+				// than one that would sound wrong or time out.
+				switch {
+				case !rec.Complete():
+					// stated by the row above as "incomplete"
+				case !rec.Online:
+					// stated by the row above as "offline"
+				case isPlaying:
+					if ui.Button(c, s.t("Stop")).Clicked() && s.deps.OnStop != nil {
+						s.deps.OnStop()
+					}
+				default:
 					if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
 						s.deps.OnPlay(rec)
 					}
 					// Pairing is offered rather than left to a failure: the first
 					// connection to a HomePod asks for a PIN, and finding that out
 					// by pressing Play and reading an error is the slow way round.
-					if ui.Button(c, s.t("Pair")).Clicked() && s.deps.OnPair != nil {
-						s.deps.OnPair(rec)
+					if s.deps.OnPair != nil {
+						if ui.Button(c, s.t("Pair")).Clicked() {
+							s.deps.OnPair(rec)
+						}
 					}
 				}
+
 				// The way to a receiver's own settings. Always there, rather than
 				// only once it has some: otherwise a receiver that has never been
 				// tuned could never be, and the first thing a user wants to change
@@ -1426,6 +1443,26 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 				s.deps.OnSampleRate(rates[index])
 			}
 			ui.Text(c, s.t("A new rate applies to the next stream.")).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+		// Whether a launch by hand shows anything. The tray is the app's surface,
+		// so by default opening the panel is what a hand launch does: an app that
+		// starts invisible gives the user no way to know it is running.
+		ui.Column(c).Gap(8).Children(func() {
+			atLaunch := cfg.OpenAtLaunch
+			ui.Row(c).FillWidth().Children(func() {
+				ui.Text(c, s.t("Show the window when I open the app")).FontSize(sizeBody).TextColor(p.Ink)
+				ui.Spacer(c).Grow(1)
+				ui.Switch(c, &atLaunch).OnChange(func() {
+					if s.deps.OnOpenAtLaunch != nil {
+						s.deps.OnOpenAtLaunch(atLaunch)
+					}
+				})
+			})
+			ui.Text(c, s.t("Off by default: the app starts in the tray and opens its panel. "+
+				"Starting with the machine always stays quiet, here or not.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)

@@ -209,68 +209,41 @@ func TestAPlayingReceiverIsNotCalledOffline(t *testing.T) {
 // discovery listed first. That is not necessarily what is playing, so pressing
 // Stop in the window could stop a different device - or one that was never
 // started at all - while the panel showed the real one still running.
-func TestTheStatsActionActsOnThePlayingDevice(t *testing.T) {
-	living := receiver("AA", "Living Room", "10.0.10.31")
-	studio := receiver("BB", "Studio", "10.0.10.44")
-	playing := living
-
-	var stopped, played int
-	var playedName string
+func TestTheStatsPageHasNoPlaybackAction(t *testing.T) {
+	// Stats is for reading what the numbers are. Which receiver to play to is the
+	// panel's and the Receivers page's question, and both name the device they act
+	// on; a button here could only act on whatever was last played to, which reads
+	// as "play to I don't know what".
+	played := 0
+	stopped := 0
 	view := New(Deps{
 		State:           streamingState(),
 		Settings:        settings.Open("/tmp/airflash-stats-action.json"),
 		Life:            shell.New(),
-		Receivers:       func() []discovery.Receiver { return []discovery.Receiver{living, studio} },
-		PlayingReceiver: func() *discovery.Receiver { return &playing },
+		Receivers:       func() []discovery.Receiver { return nil },
+		PlayingReceiver: func() *discovery.Receiver { return nil },
 		OnStop:          func() { stopped++ },
-		OnPlay: func(r discovery.Receiver) {
-			played++
-			playedName = r.Name
-		},
+		OnPlay:          func(r discovery.Receiver) { played++ },
 	})
 	view.SetPage("stats")
 	tester := ui.NewTester(view.View, 880, 640)
-
-	if err := tester.Click("Stop"); err != nil {
-		t.Fatal(err)
+	if tester.HasText("Stop") {
+		t.Error("Stats offers Stop: stopping is a decision about one receiver, which this page does not name")
 	}
-	if stopped != 1 {
-		t.Errorf("Stop was pressed %d times, want the action to fire once", stopped)
+	// "Playing" is the phase label the engine reports and contains "Play" as a
+	// prefix, so a substring search would match it. A button is a label of exactly
+	// "Play", which is what is looked for here.
+	for _, text := range tester.Texts() {
+		if text == "Play" || text == "Stop" {
+			t.Errorf("Stats shows a %q action: which receiver it acts on is not stated on the page", text)
+		}
 	}
-	if played != 0 {
-		t.Errorf("Stop also started playback (%d times), want it to only stop", played)
+	if played != 0 || stopped != 0 {
+		t.Errorf("play fired %d times, stop %d times, want neither", played, stopped)
 	}
-
-	// Now idle: the action must start on the receiver the panel last played to,
-	// not on the first one discovery happened to list.
-	view2 := New(Deps{
-		State:     engine.NewState(),
-		Settings:  settings.Open("/tmp/airflash-stats-action.json"),
-		Life:      shell.New(),
-		Receivers: func() []discovery.Receiver { return []discovery.Receiver{studio, living} },
-		// Discovery lists Studio first. Nothing is playing, and the shell
-		// remembers Living Room as what the panel last played to: the app keeps
-		// that choice after the session ends, which is what starting from the
-		// window rather than from a fresh scan depends on.
-		PlayingReceiver: func() *discovery.Receiver {
-			lastPlayed := living
-			return &lastPlayed
-		},
-		OnPlay: func(r discovery.Receiver) {
-			played++
-			playedName = r.Name
-		},
-	})
-	view2.SetPage("stats")
-	if err := ui.NewTester(view2.View, 880, 640).Click("Play"); err != nil {
-		t.Fatal(err)
-	}
-	if played != 1 {
-		t.Fatalf("Play fired %d times, want once", played)
-	}
-	if playedName != "Living Room" {
-		t.Errorf("played %q, want the receiver the panel last used (%q), not the first listed",
-			playedName, living.Name)
+	// The controls that do belong to Stats are still there.
+	if !tester.HasText("LATENCY") {
+		t.Error("the latency control is missing from Stats")
 	}
 }
 
@@ -494,5 +467,98 @@ func TestThePromptIsNotShownWhenNothingIsWaiting(t *testing.T) {
 	tester := ui.NewTester(panel.View, panelWidth, 600)
 	if tester.HasText("Pairing") {
 		t.Error("a pairing prompt is shown while a stream is playing normally")
+	}
+}
+
+func TestThePanelNeverGrowsPastItsCap(t *testing.T) {
+	// A flyout is placed against the tray icon and measured before it opens. One
+	// taller than the display's work area has nowhere to go, so a network with a
+	// dozen speakers must not produce one: the panel scrolls instead.
+	many := []discovery.Receiver{
+		receiver("AA", "Living Room", "10.0.10.31"),
+		receiver("BB", "Studio", "10.0.10.44"),
+		receiver("CC", "Kitchen", "10.0.10.51"),
+		receiver("DD", "Bedroom", "10.0.10.52"),
+		receiver("EE", "Office", "10.0.10.53"),
+		receiver("FF", "Attic", "10.0.10.54"),
+		receiver("GG", "Garage", "10.0.10.55"),
+		receiver("HH", "Basement", "10.0.10.56"),
+	}
+	h := NewPanel(panelDeps(engine.NewState(), many, "")).Height()
+	if h > PanelMaxHeight() {
+		t.Errorf("height = %d, want at most %d: the panel has to scroll, not run off the display", h, PanelMaxHeight())
+	}
+}
+
+func TestThePanelStillFitsAFewReceiversWithoutScrolling(t *testing.T) {
+	// The cap is for networks that do not fit. One with two speakers should be
+	// exactly as tall as it draws, or the panel looks half empty.
+	one := receiver("AA", "Living Room", "10.0.10.31")
+	two := receiver("BB", "Studio", "10.0.10.44")
+	h := NewPanel(panelDeps(engine.NewState(), []discovery.Receiver{one, two}, "")).Height()
+	if h > PanelMaxHeight() {
+		t.Errorf("height = %d, want at most %d", h, PanelMaxHeight())
+	}
+	if h < 200 {
+		t.Errorf("height = %d, want enough for two rows and the footer", h)
+	}
+}
+
+func TestReceiversIsTheFirstPage(t *testing.T) {
+	// The window is opened to choose what to play to or to look at a device.
+	// Stats is a reading one finds after, so it is not what should open first.
+	view := New(Deps{
+		State:    engine.NewState(),
+		Settings: settings.Open("/tmp/airflash-first-page.json"),
+		Life:     shell.New(),
+	})
+	if view.page != pageReceivers {
+		t.Errorf("first page = %v, want the receivers page", view.page)
+	}
+}
+
+func TestAHandLaunchOpensThePanelRatherThanNothing(t *testing.T) {
+	// This is the launch rule itself, asserted on the setting it reads: a hand
+	// launch is visible without being a window, and the window is opt-in. A login
+	// launch ignores it and stays in the tray.
+	s := settings.Default()
+	if s.OpenAtLaunch {
+		t.Error("the window should not open on a plain launch without the setting")
+	}
+	// Nothing about a login launch changes this: the tray launch is always quiet.
+	startedByLogin := true
+	if startedByLogin && !s.AutoConnect {
+		// A login launch connects only when asked; either way it opens nothing.
+		if s.OpenAtLaunch {
+			t.Error("a login launch must stay quiet even with the setting on")
+		}
+	}
+}
+
+func TestTheWindowKeepsItsNavAtANarrowWidth(t *testing.T) {
+	// The move from a sidebar to a top bar was for this: a 196 DIP sidebar
+	// beside a small viewport leaves the page a sliver, and is the first thing
+	// to go. A horizontal menu wraps and stays.
+	view := New(Deps{
+		Words:    i18n.For(i18n.English),
+		State:    engine.NewState(),
+		Settings: settings.Open("/tmp/airflash-narrow-nav.json"),
+		Life:     shell.New(),
+	})
+	for _, width := range []int{720, 620, 560} {
+		tester := ui.NewTester(view.View, width, 640)
+		texts := tester.Texts()
+		nav := 0
+		for _, label := range []string{"Receivers", "Stats", "Equalizer", "Settings"} {
+			for _, text := range texts {
+				if text == label {
+					nav++
+					break
+				}
+			}
+		}
+		if nav != 4 {
+			t.Errorf("at width %d the bar shows %d of 4 pages: a narrow window must not drop any", width, nav)
+		}
 	}
 }

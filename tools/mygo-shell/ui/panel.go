@@ -76,8 +76,21 @@ func (p *Panel) Height() int {
 	if bottom <= 0 {
 		return 200
 	}
-	return int(bottom) + 2*panelPad
+	measured := int(bottom) + 2*panelPad
+	// The flyout is never taller than the cap: one that ran past the bottom of
+	// the display would be unusable, and its content scrolls instead.
+	if measured > PanelMaxHeight() {
+		return PanelMaxHeight()
+	}
+	return measured
 }
+
+// PanelMaxHeight is the tallest the panel flyout is allowed to be, in DIPs.
+//
+// A flyout is measured and then placed against the tray icon, so one taller than
+// the display's work area has nowhere to go. A network with a dozen speakers
+// would produce one; at the cap the panel scrolls instead.
+func PanelMaxHeight() int { return 640 }
 
 // View builds one frame of the panel.
 //
@@ -95,7 +108,10 @@ func (p *Panel) View(c *ui.Context) {
 	c.SetTheme(themeFor(pal, c.Theme().Dark))
 	c.Root().Background(ui.Transparent)
 
-	box := ui.Column(c).Fill().Padding(14).Gap(12)
+	// The panel scrolls once it is taller than the flyout allows, so a network
+	// with more speakers than fit reaches them all instead of clipping the last
+	// one - and the reading and the footer - off the bottom.
+	box := ui.Scroll(c).Fill().Padding(14).Gap(12).MaxHeight(float32(PanelMaxHeight()))
 	switch {
 	case c.Vibrancy():
 		// Over the popover's own material.

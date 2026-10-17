@@ -132,7 +132,7 @@ func (a *App) currentPage() string {
 	if p := a.page.Load(); p != nil {
 		return *p
 	}
-	return "stats"
+	return "receivers"
 }
 
 func (a *App) run() {
@@ -157,11 +157,26 @@ func (a *App) run() {
 	mygo.App.WhenReady(func() {
 		a.installTray()
 		a.startDiscovery()
-		// A launch at login is the machine's, not a person's: nothing is shown,
-		// and the last receiver is connected to if that is what was asked for. A
-		// launch by hand stays as it was, and the user opens the panel.
-		if a.startedByLogin && a.settings.Current().AutoConnect {
-			a.connectToLast()
+
+		// A launch at login is the machine's, not a person's: it stays quiet in
+		// the tray whatever the setting says, and connects to the last receiver
+		// if that is what was asked for.
+		if a.startedByLogin {
+			if a.settings.Current().AutoConnect {
+				a.connectToLast()
+			}
+			return
+		}
+
+		// A launch by hand. Whether anything is shown is the user's choice: the
+		// tray is the app's surface by default, so a hand launch opens the panel
+		// rather than sitting invisible with no way to know it is running. A
+		// user who wants the window instead has the setting.
+		switch {
+		case a.settings.Current().OpenAtLaunch:
+			a.openWindow("receivers")
+		default:
+			a.togglePanel()
 		}
 	})
 
@@ -384,6 +399,9 @@ func (a *App) openWindow(page string) {
 		OnCaptureEndpoint: func(id string) {
 			a.settings.Update(func(s *settings.Settings) { s.CaptureEndpoint = id })
 		},
+		OnOpenAtLaunch: func(on bool) {
+			a.settings.Update(func(s *settings.Settings) { s.OpenAtLaunch = on })
+		},
 		OnMuteWhileStreaming: func(on bool) {
 			a.settings.Update(func(s *settings.Settings) { s.MuteWhileStreaming = on })
 			// The setting is what a session applies when it starts, so it takes
@@ -428,7 +446,40 @@ func (a *App) installTray() {
 	// A tray needs an icon; without one the app still runs, so a failure here
 	// is reported rather than fatal.
 	icon := trayIcon()
-	menu := mygo.NewMenu([]*mygo.MenuItem{
+
+	// No menu on the icon. A tray menu takes the left click over, so with one the
+	// panel never opens from a click and the menu is the only way in. A panel is
+	// the app's surface, so the click goes to it and the menu is moved to the
+	// right click, which is where a context menu belongs.
+	tray, err := mygo.NewTray(mygo.TrayOptions{
+		Icon:    icon,
+		ToolTip: "AirFlash",
+	})
+	if err != nil {
+		log.Printf("tray unavailable, opening the window instead: %v", err)
+		a.openWindow("stats")
+		return
+	}
+	a.tray = tray
+	// On Linux a tray icon reports neither its position nor a double click, so
+	// both ways to open the panel collapse to the one that works there.
+	tray.OnClick(a.togglePanel)
+	tray.OnRightClick(a.trayMenu)
+}
+
+// trayMenu is the icon's right-click menu: the way to the window and the way
+// out. The left click goes to the panel, so this is what the menu is for.
+func (a *App) trayMenu() {
+	// The menu is built once per right click and set on the icon before it is
+	// shown, which is what PopUpMenu shows: it has no arguments because it
+	// presents whatever menu the tray already holds.
+	a.tray.SetMenu(a.trayMenuItems())
+	a.tray.PopUpMenu()
+}
+
+// trayMenuItems is the right-click menu: the way to the window and the way out.
+func (a *App) trayMenuItems() *mygo.Menu {
+	return mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "Stats", Click: func(*mygo.MenuItem, *mygo.Window) {
 			a.openWindow("stats")
 		}},
@@ -438,22 +489,6 @@ func (a *App) installTray() {
 		{Type: mygo.MenuItemSeparator},
 		{Label: "Quit", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }},
 	})
-
-	tray, err := mygo.NewTray(mygo.TrayOptions{
-		Icon:    icon,
-		ToolTip: "AirFlash",
-		Menu:    menu,
-	})
-	if err != nil {
-		log.Printf("tray unavailable, opening the window instead: %v", err)
-		a.openWindow("stats")
-		return
-	}
-	a.tray = tray
-	// On Linux a tray icon reports neither clicks nor its own position, so a
-	// menu item is the way to the panel and the panel opens in the middle of
-	// the display. On the other platforms a click is enough.
-	tray.OnClick(a.togglePanel)
 }
 
 // adaptedTarget is the latency the shell worked out from previous sessions.
@@ -543,6 +578,13 @@ func (a *App) togglePanel() {
 	// The panel is destroyed when it closes, so it holds nothing while the user
 	// is not looking at it.
 	w.OnClosed(func() { a.flyout.Store(nil) })
+	// A flyout closes when it loses focus, which is what every other popover on
+	// every other platform does. Without this the panel stays over whatever the
+	// user clicked next to.
+	w.OnBlur(func() {
+		w.Close()
+		a.flyout.Store(nil)
+	})
 	a.flyout.Store(w)
 }
 

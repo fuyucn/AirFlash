@@ -111,6 +111,13 @@ type Settings struct {
 	// host bounds this at twenty.
 	ReconnectAttempts int `json:"reconnect_attempts"`
 
+	// OpenAtLaunch shows the window when the app starts, rather than leaving the
+	// app resident in the tray. A launch at login stays quiet on purpose - nobody
+	// wants a window at sign-in - so this applies to a launch by hand, which is
+	// the one the user asked for. Off by default: the tray is the app's surface,
+	// and a window the user did not ask for is a window they have to close.
+	OpenAtLaunch bool `json:"open_at_launch"`
+
 	// PerReceiver holds one receiver's own settings, keyed by receiver id. An
 	// entry that is absent means "use the global setting", which is why every
 	// field is a pointer: nil is "not set" and a value is "overridden".

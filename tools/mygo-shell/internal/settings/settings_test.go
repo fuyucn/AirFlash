@@ -392,3 +392,24 @@ func TestAManualReceiverWithNoUsableAddressIsDroppedOnLoad(t *testing.T) {
 		t.Errorf("kept %s, want the one usable receiver", got.ManualReceivers[0].Host)
 	}
 }
+
+func TestALaunchByHandIsVisibleByDefaultButStartsInTheTray(t *testing.T) {
+	// A tray app that opens nothing on a hand launch gives the user no way to
+	// know it is running. The tray panel is what opens, so a launch is visible
+	// without being a window. The window is opt-in through this setting.
+	s := Default()
+	if s.OpenAtLaunch {
+		t.Error("OpenAtLaunch should default to false: the tray panel is the launch surface")
+	}
+}
+
+func TestTheSettingIsStoredAndReloaded(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shell.json")
+	st := Open(path)
+	st.Update(func(s *Settings) { s.OpenAtLaunch = true })
+
+	if !Open(path).Current().OpenAtLaunch {
+		t.Error("OpenAtLaunch did not survive a reload")
+	}
+}

@@ -101,6 +101,10 @@ var chinese = map[string]string{
 	"The sound the PC is playing is recorded from this device. A machine with one sound card has nothing to choose.": "电脑播放的声音从这个设备录制。只有一块声卡的电脑没有可选的。",
 	"A new device applies to the next stream.": "新设备在下次开始播放时生效。",
 
+	// Launch behaviour.
+	"Show the window when I open the app": "手动打开时显示窗口",
+	"Off by default: the app starts in the tray and opens its panel. Starting with the machine always stays quiet, here or not.": "默认关闭：程序启动后驻留托盘并弹出面板。开机自启始终静默，与此设置无关。",
+
 	// Pairing.
 	"Pairing":                   "配对",
 	"Pair":                      "配对",
