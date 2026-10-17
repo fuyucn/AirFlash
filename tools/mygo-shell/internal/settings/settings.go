@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"os"
 	"path/filepath"
@@ -62,6 +63,9 @@ type Settings struct {
 
 	// Language is which words the interface uses. System follows the machine.
 	Language string `json:"language"`
+
+	// Equalizer is the shell's own, off and flat by default.
+	Equalizer equalizer.Settings `json:"equalizer"`
 
 	// StartAtLogin launches the shell when the machine starts, as the desktop
 	// host does through the same Run key.
@@ -209,6 +213,12 @@ func (s Settings) normalized() Settings {
 	if s.Mode == ModeLightweight {
 		s.ShowTrend = false
 		s.ReducedMotion = true
+	}
+	if len(s.Equalizer.BandGainsDB) != len(equalizer.Frequencies) {
+		// A settings file from before the equalizer existed, or one written by a
+		// build with a different number of bands, must not leave a short slice
+		// behind: every band read would panic.
+		s.Equalizer = equalizer.Default()
 	}
 	if s.Language == "" {
 		s.Language = string(i18n.System)

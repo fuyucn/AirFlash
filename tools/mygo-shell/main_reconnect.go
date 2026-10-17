@@ -127,14 +127,18 @@ func (a *App) startAttempt(s session) {
 	opts := engine.DefaultStreamOptions()
 	// The receiver's own settings where it has them, keyed by its id: a stereo
 	// pair is one receiver with two halves, so its settings are the pair's.
-	if id := s.receiverID; id != "" {
-		opts.LatencyMs = cfg.LatencyFor(id)
-		opts.Gain = cfg.GainFor(id)
-	} else {
+	switch {
+	case s.receiverID != "":
+		opts.LatencyMs = cfg.LatencyFor(s.receiverID)
+		opts.Gain = cfg.GainFor(s.receiverID)
+	default:
 		opts.LatencyMs = cfg.EffectiveLatencyMs(a.adaptedTarget())
 		opts.Gain = cfg.Gain
 	}
 	opts.SampleRate = cfg.SampleRate
+	// The equalizer goes in with the stream, so what is heard is what the
+	// settings say from the first packet rather than from the first edit.
+	opts.Equalizer = cfg.Equalizer
 	a.state.ResetSession()
 
 	if _, err := client.StartStream(s.peers, opts); err != nil {

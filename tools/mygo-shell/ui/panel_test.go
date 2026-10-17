@@ -387,3 +387,41 @@ func TestEveryInterfaceStringHasAChineseEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestEveryPageDrawsItsContent(t *testing.T) {
+	// A page added to the navigation but not to the content switch draws a blank
+	// panel, which is how the equalizer page first appeared: the sidebar listed
+	// it and the window showed nothing. The sidebar is not the view.
+	pages := []string{"stats", "receivers", "equalizer", "settings"}
+	for _, page := range pages {
+		cfg := settings.Open("/tmp/airflash-pages.json")
+		cfg.Update(func(s *settings.Settings) {
+			s.Language = string(i18n.Chinese)
+		})
+		view := New(Deps{
+			Words:    i18n.For(i18n.Chinese),
+			State:    streamingState(),
+			Settings: cfg,
+			Life:     shell.New(),
+		})
+		view.SetPage(page)
+		tester := ui.NewTester(view.View, 880, 1180)
+
+		// Each page has something the sidebar never shows.
+		if page == "stats" && !tester.HasText("延迟曲线") {
+			// The section label is drawn from the LATENCY OVER TIME key.
+			t.Errorf("%s page drew no content", page)
+		}
+		if page == "equalizer" && !tester.HasText("均衡器") {
+			t.Errorf("%s page drew no content", page)
+		}
+		if page == "settings" && !tester.HasText("轻量模式") {
+			// The switch, which is the first thing on the page.
+			t.Errorf("%s page drew no content", page)
+		}
+		// And no page is only the sidebar.
+		if page != "stats" && len(tester.Texts()) <= 6 {
+			t.Errorf("%s page drew %d strings, which is only the sidebar", page, len(tester.Texts()))
+		}
+	}
+}

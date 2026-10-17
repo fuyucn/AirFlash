@@ -36,7 +36,6 @@ var chinese = map[string]string{
 	"VOL":                      "音量",
 
 	// Readings.
-	"Target":               "目标",
 	"ms delay":             "ms 延迟",
 	"waiting for playback": "等待播放",
 	"nothing measured yet": "还没有测量数据",
@@ -67,11 +66,6 @@ var chinese = map[string]string{
 	// The capture section.
 	"the PC's own audio is faltering": "电脑采集的音频有问题",
 	"sound is being captured":         "正在采集音频",
-	"Input rate":                      "输入采样率",
-	"Capture to send, slowest 5%":     "采集到发送（最慢 5%）",
-	"Queue age":                       "队列积压",
-	"Frames dropped":                  "丢帧",
-	"Buffer underruns":                "缓冲欠载",
 
 	// The loss section.
 	"something is being lost":   "有丢包",
@@ -107,4 +101,23 @@ var chinese = map[string]string{
 	"global":                        "全局",
 	"Latency %d ms":                 "延迟 %d ms",
 	"Tune":                          "单设备设置",
+	"Equalizer":                     "均衡器",
+	"Preamp":                        "预放大",
+	"Flat":                          "平直",
+	"Bass boost":                    "低音增强",
+	"Vocals":                        "人声",
+	"Pop":                           "流行",
+	"Rock":                          "摇滚",
+	"Ten bands from 31 Hz to 16 kHz, each moving up to 12 dB. A change is heard as it is made.": "从 31 Hz 到 16 kHz 共十段，每段最多 ±12 dB。改动会立即生效。",
+	"Target":                      "目标",
+	"Receiver buffer":             "接收端缓冲",
+	"Network round trip":          "网络往返",
+	"Real-time · 120 ms":          "实时 · 120 ms",
+	"Normal · 200 ms":             "正常 · 200 ms",
+	"Buffered · 500 ms":           "缓冲 · 500 ms",
+	"Input rate":                  "输入采样率",
+	"Capture to send, slowest 5%": "采集到发送（最慢 5%）",
+	"Queue age":                   "队列积压",
+	"Frames dropped":              "丢帧",
+	"Buffer underruns":            "缓冲欠载",
 }

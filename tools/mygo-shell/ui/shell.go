@@ -8,6 +8,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
@@ -47,6 +48,17 @@ type Deps struct {
 	// OnLanguage changes the language, which rebuilds the window so the change
 	// is not half applied.
 	OnLanguage func(string)
+	// OnEqualizer reports that the equalizer changed, which a live stream is told
+	// about at once and a new one inherits from settings.
+	OnEqualizer func()
+	// OnEqualizerEnabled turns the equalizer on or off.
+	OnEqualizerEnabled func(bool)
+	// OnEqualizerPreset sets the curve to a named preset.
+	OnEqualizerPreset func(name string)
+	// OnEqualizerBand moves one band by its index.
+	OnEqualizerBand func(index int, db float64)
+	// OnEqualizerPreamp moves the overall level.
+	OnEqualizerPreamp func(db float64)
 	// OnReceiverOption changes one field of one receiver's own settings. The
 	// field is named rather than the whole struct, so changing one leaves the
 	// others as they were.
@@ -68,6 +80,7 @@ type page int
 const (
 	pageStats page = iota
 	pageReceivers
+	pageEqualizer
 	pageSettings
 )
 
@@ -98,6 +111,8 @@ func (s *Shell) SetPage(name string) {
 	switch name {
 	case "receivers":
 		s.page = pageReceivers
+	case "equalizer":
+		s.page = pageEqualizer
 	case "settings":
 		s.page = pageSettings
 	default:
@@ -143,6 +158,7 @@ func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings) {
 
 		s.navItem(c, p, s.t("Stats"), pageStats)
 		s.navItem(c, p, s.t("Receivers"), pageReceivers)
+		s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
 		s.navItem(c, p, s.t("Settings"), pageSettings)
 
 		ui.Spacer(c).Grow(1)
@@ -196,6 +212,8 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 			s.statsPage(c, p, cfg, st)
 		case pageReceivers:
 			s.receiversPage(c, p, cfg)
+		case pageEqualizer:
+			s.equalizerPage(c, p, cfg)
 		case pageSettings:
 			s.settingsPage(c, p, cfg)
 		}
@@ -230,7 +248,7 @@ func (s *Shell) statsPage(c *ui.Context, p palette, cfg settings.Settings, st en
 func (s *Shell) gaps(c *ui.Context, p palette, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Row(c).FillWidth().Children(func() {
-			sectionLabel(c, p, "GAPS")
+			sectionLabel(s.deps.Words, c, p, "GAPS")
 			ui.Spacer(c).Grow(1)
 			ui.Text(c, gapSummary(s.deps.Words, st.Slots)).FontSize(sizeBody).
 				TextColor(gapSummaryColor(p, st.Slots))
@@ -337,16 +355,16 @@ func (s *Shell) headline(c *ui.Context, p palette, cfg settings.Settings, st eng
 		})
 
 		// The parts, as label-and-value rows.
-		s.metricRow(c, p, "Target", fmt.Sprintf("%.0f ms", target), p.Ink)
+		s.metricRow(c, p, s.t("Target"), fmt.Sprintf("%.0f ms", target), p.Ink)
 		if st.HasReceiverBuffer {
 			label := "Receiver buffer"
 			if st.ReceiverBufferEstimated {
 				label = "Receiver buffer (estimated)"
 			}
-			s.metricRow(c, p, label, fmt.Sprintf("%.0f ms", st.ReceiverBufferMs), p.Ink)
+			s.metricRow(c, p, s.t(label), fmt.Sprintf("%.0f ms", st.ReceiverBufferMs), p.Ink)
 		}
 		if st.HasNetworkRTT {
-			s.metricRow(c, p, "Network round trip",
+			s.metricRow(c, p, s.t("Network round trip"),
 				fmt.Sprintf("%.0f ms", st.NetworkRTTMs), rttColor(p, st.NetworkRTTMs))
 		}
 	})
@@ -371,7 +389,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Row(c).FillWidth().Children(func() {
-			sectionLabel(c, p, "LATENCY OVER TIME")
+			sectionLabel(s.deps.Words, c, p, "LATENCY OVER TIME")
 			ui.Spacer(c).Grow(1)
 			if st.HasTotalLatency && len(st.History) > 0 {
 				ui.Text(c, fmt.Sprintf("%.0f ms now", st.History[len(st.History)-1])).
@@ -598,7 +616,7 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 		gain := cfg.Gain
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				sectionLabel(c, p, "VOLUME")
+				sectionLabel(s.deps.Words, c, p, "VOLUME")
 				ui.Text(c, fmt.Sprintf("%.0f%%", gain*100)).
 					FontSize(sizeBody).TextColor(p.InkMuted)
 			})
@@ -670,9 +688,9 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 	names := settings.LatencyLabels()
 
 	labels := make([]string, 0, len(choices)+1)
-	labels = append(labels, "Auto")
+	labels = append(labels, s.t("Auto"))
 	for _, mode := range choices {
-		labels = append(labels, names[mode])
+		labels = append(labels, s.t(names[mode]))
 	}
 
 	index := 0
@@ -689,7 +707,7 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 
 	ui.Column(c).Gap(8).Children(func() {
 		ui.Row(c).Gap(10).Children(func() {
-			sectionLabel(c, p, "LATENCY")
+			sectionLabel(s.deps.Words, c, p, "LATENCY")
 		})
 
 		seg := ui.Segmented(c, &index, labels...)
@@ -751,7 +769,7 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Row(c).FillWidth().Children(func() {
-			sectionLabel(c, p, "LOSSES")
+			sectionLabel(s.deps.Words, c, p, "LOSSES")
 			ui.Spacer(c).Grow(1)
 			if unhealthy {
 				ui.Text(c, s.t("something is being lost")).FontSize(sizeBody).TextColor(p.Warning)
@@ -763,11 +781,11 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 		// Counters as label-and-value rows, so they line up in one column and
 		// can be compared by eye. A zero stays quiet; anything else is called
 		// out, because every one of these is an audible gap.
-		s.countRow(c, p, "Sender fell behind", st.SenderLateRecoveries)
-		s.countRow(c, p, "Audio slots skipped", st.SkippedPackets)
-		s.countRow(c, p, "Lost past recovery", losses)
-		s.countRow(c, p, "Packets dropped on send", st.MediaSendDropped)
-		s.countRow(c, p, "Retransmit queue overflow", st.RetransmitQueueDrops)
+		s.countRow(c, p, s.t("Sender fell behind"), st.SenderLateRecoveries)
+		s.countRow(c, p, s.t("Audio slots skipped"), st.SkippedPackets)
+		s.countRow(c, p, s.t("Lost past recovery"), losses)
+		s.countRow(c, p, s.t("Packets dropped on send"), st.MediaSendDropped)
+		s.countRow(c, p, s.t("Retransmit queue overflow"), st.RetransmitQueueDrops)
 
 		if st.FeedbackDelayed {
 			ui.Text(c, s.t("The receiver's feedback is late, which is what a rising ping looks like.")).
@@ -788,7 +806,7 @@ func (s *Shell) capture(c *ui.Context, p palette, st engine.Metrics) {
 
 	ui.Column(c).FillWidth().Gap(10).Children(func() {
 		ui.Row(c).FillWidth().Children(func() {
-			sectionLabel(c, p, "CAPTURE")
+			sectionLabel(s.deps.Words, c, p, "CAPTURE")
 			ui.Spacer(c).Grow(1)
 			if unhealthy {
 				ui.Text(c, s.t("the PC's own audio is faltering")).FontSize(sizeBody).TextColor(p.Warning)
@@ -798,17 +816,17 @@ func (s *Shell) capture(c *ui.Context, p palette, st engine.Metrics) {
 		})
 
 		if cap.InputRate > 0 {
-			s.metricRow(c, p, "Input rate", fmt.Sprintf("%d Hz", cap.InputRate), p.Ink)
+			s.metricRow(c, p, s.t("Input rate"), fmt.Sprintf("%d Hz", cap.InputRate), p.Ink)
 		}
 		if p95 := cap.CaptureToSendP95Ms; p95 != nil {
-			s.metricRow(c, p, "Capture to send, slowest 5%",
+			s.metricRow(c, p, s.t("Capture to send, slowest 5%"),
 				fmt.Sprintf("%.1f ms", *p95), p.Ink)
 		}
 		if cap.MaxQueueAgeMs > 0 {
-			s.metricRow(c, p, "Queue age", fmt.Sprintf("%.1f ms", cap.MaxQueueAgeMs), p.Ink)
+			s.metricRow(c, p, s.t("Queue age"), fmt.Sprintf("%.1f ms", cap.MaxQueueAgeMs), p.Ink)
 		}
-		s.countRow(c, p, "Frames dropped", cap.DroppedFrames)
-		s.countRow(c, p, "Buffer underruns", cap.UnderrunPackets)
+		s.countRow(c, p, s.t("Frames dropped"), cap.DroppedFrames)
+		s.countRow(c, p, s.t("Buffer underruns"), cap.UnderrunPackets)
 	})
 }
 
@@ -933,7 +951,7 @@ func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings,
 	}
 
 	ui.Row(c).FillWidth().Padding(22, 4, 4, 4).Gap(14).Children(func() {
-		sectionLabel(c, p, s.t("LATENCY"))
+		sectionLabel(s.deps.Words, c, p, "LATENCY")
 		seg := ui.Segmented(c, &index, labels...)
 		if seg.Changed() && s.deps.OnReceiverOption != nil {
 			if index == 0 {
@@ -963,6 +981,100 @@ func ownSuffix(words func(string) string, own bool) string {
 
 // settingsPage holds the mode switch, which is the one setting that changes
 // what the app costs to run.
+// equalizerPage is the ten-band graphic equalizer.
+//
+// The presets are the desktop host's own curves and its own numbers, so a person
+// who has used that recognises the shapes. A band moved from one is no longer
+// that preset: it is "Custom", which is what it has become.
+//
+// Every change goes to the engine at once, rather than waiting for a confirm:
+// the engine takes a sequence number and keeps the latest, so a slider can be
+// dragged as fast as the hand can move.
+func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
+	eq := cfg.Equalizer
+	if len(eq.BandGainsDB) != len(equalizer.Frequencies) {
+		eq = equalizer.Default()
+	}
+
+	ui.Column(c).FillWidth().Gap(24).Children(func() {
+		// On or off, and the preset.
+		ui.Column(c).Gap(10).Children(func() {
+			ui.Row(c).FillWidth().Children(func() {
+				ui.Text(c, s.t("Equalizer")).FontSize(sizeBody).TextColor(p.Ink)
+				ui.Spacer(c).Grow(1)
+				on := eq.Enabled
+				ui.Switch(c, &on).OnChange(func() {
+					if s.deps.OnEqualizerEnabled != nil {
+						s.deps.OnEqualizerEnabled(on)
+					}
+				})
+			})
+			ui.Text(c, s.t("Ten bands from 31 Hz to 16 kHz, each moving up to 12 dB. "+
+				"A change is heard as it is made.")).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+		})
+
+		// The presets, as a segmented control with Custom at the end.
+		names := equalizer.PresetNames()
+		labels := make([]string, 0, len(names))
+		for i, n := range names {
+			if n == equalizer.Custom {
+				labels = append(labels, s.t("Custom"))
+				continue
+			}
+			labels = append(labels, s.t(equalizer.Presets[i].Name))
+		}
+		index := len(names) - 1 // Custom, until a preset is recognised.
+		if p, ok := eq.Is(); ok {
+			for i, q := range equalizer.Presets {
+				if q.Name == p.Name {
+					index = i
+				}
+			}
+		}
+		seg := ui.Segmented(c, &index, labels...)
+		if seg.Changed() && index < len(equalizer.Presets) && s.deps.OnEqualizerPreset != nil {
+			s.deps.OnEqualizerPreset(equalizer.Presets[index].Name)
+		}
+
+		// Preamp, and then the bands.
+		preamp := eq.PreampDB
+		ui.Column(c).Gap(8).Children(func() {
+			ui.Row(c).FillWidth().Children(func() {
+				ui.Text(c, s.t("Preamp")).FontSize(sizeSmall).TextColor(p.Ink)
+				ui.Spacer(c).Grow(1)
+				ui.Text(c, fmt.Sprintf("%+.1f dB", preamp)).FontSize(sizeSmall).
+					TextColor(p.InkMuted)
+			})
+			ui.Slider(c, &preamp, -equalizer.LimitDB, equalizer.LimitDB).FillWidth().
+				OnChange(func() {
+					if s.deps.OnEqualizerPreamp != nil {
+						s.deps.OnEqualizerPreamp(preamp)
+					}
+				})
+		})
+
+		// The ten bands, each labelled with its frequency.
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			for i := range equalizer.Frequencies {
+				band := eq.BandGainsDB[i]
+				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, equalizer.Label(i)).FontSize(sizeSmall).TextColor(p.Ink).
+						Width(64)
+					ui.Slider(c, &band, -equalizer.LimitDB, equalizer.LimitDB).Grow(1).
+						OnChange(func() {
+							if s.deps.OnEqualizerBand != nil {
+								s.deps.OnEqualizerBand(i, band)
+							}
+						})
+					ui.Text(c, fmt.Sprintf("%+.0f dB", band)).FontSize(sizeSmall).
+						TextColor(p.InkMuted).Width(48)
+				})
+			}
+		})
+	})
+}
+
 func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 	ui.Column(c).FillWidth().Gap(26).Children(func() {
 		// The mode switch, which is the one setting that changes what the app

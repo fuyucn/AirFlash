@@ -134,8 +134,8 @@ func rule(e ui.Element) ui.Element {
 // sectionLabel is the small uppercase label a section opens with. The letters
 // are spread because the label is a heading for a block of measurements, not
 // running text, and the spacing is what keeps it from reading as one.
-func sectionLabel(c *ui.Context, p palette, s string) {
-	ui.Text(c, s).FontSize(sizeSmall).TextColor(p.InkMuted).
+func sectionLabel(words i18n.Translator, c *ui.Context, p palette, s string) {
+	ui.Text(c, words.T(s)).FontSize(sizeSmall).TextColor(p.InkMuted).
 		LetterSpacing(0.9).Bold()
 }
 

@@ -242,6 +242,18 @@ func (c *Client) SetDeviceVolume(volume float64) (string, error) {
 	})
 }
 
+// SetEqualizer changes the equalizer on a live stream.
+//
+// The engine takes a strictly increasing sequence and discards a command a later
+// one has already replaced, which is what makes dragging a band jump straight to
+// the value the hand let go of.
+func (c *Client) SetEqualizer(eq any) (string, error) {
+	return c.Send(CmdSetEqualizer, map[string]any{
+		"equalizer": eq,
+		"sequence":  c.seq.Add(1),
+	})
+}
+
 // Pair starts pairing with a peer, which may answer with pin_required.
 func (c *Client) Pair(peer Peer) (string, error) {
 	return c.Send(CmdPair, map[string]any{"peer": peer})

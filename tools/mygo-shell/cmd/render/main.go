@@ -30,6 +30,12 @@ func main() {
 	}
 
 	cfg := settings.Open(filepath.Join(out, "settings.json"))
+	// A curve, so the equalizer page shows one rather than a flat ten.
+	cfg.Update(func(s *settings.Settings) {
+		s.Equalizer.Enabled = true
+		s.Equalizer.PreampDB = 2
+		s.Equalizer.BandGainsDB = []float64{6, 4, 2, 0, -1, -2, 0, 2, 4, 3}
+	})
 
 	// The same shape the user's network has: a lone HomePod, a Mac, and an
 	// Apple TV. A device advertises tsid only when it is half of a pair, so a
@@ -109,7 +115,7 @@ func main() {
 				OnPlay:    func(r discovery.Receiver) {},
 				AdaptedMs: func() int { return 500 },
 			})
-			for _, page := range []string{"stats", "receivers", "settings"} {
+			for _, page := range []string{"stats", "receivers", "equalizer", "settings"} {
 				view.SetPage(page)
 				// A tall window, so the whole page is in the shot rather than only
 				// what fits in a 640 DIP viewport: the diagnostics and capture

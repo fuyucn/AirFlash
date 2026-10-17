@@ -26,6 +26,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/enginebin"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
@@ -273,6 +274,32 @@ func (a *App) openWindow(page string) {
 				}
 				s.SetOptions(id, o)
 			})
+		},
+		// The equalizer's four changes all reach the engine the same way: a live
+		// stream takes it at once, and one that has not started inherits it from
+		// settings when it does.
+		OnEqualizer: a.sendEqualizer,
+		OnEqualizerEnabled: func(on bool) {
+			a.settings.Update(func(s *settings.Settings) { s.Equalizer.Enabled = on })
+			a.sendEqualizer()
+		},
+		OnEqualizerPreset: func(name string) {
+			a.settings.Update(func(s *settings.Settings) {
+				for _, p := range equalizer.Presets {
+					if p.Name == name {
+						s.Equalizer.Apply(p)
+					}
+				}
+			})
+			a.sendEqualizer()
+		},
+		OnEqualizerBand: func(index int, db float64) {
+			a.settings.Update(func(s *settings.Settings) { s.Equalizer.SetBand(index, db) })
+			a.sendEqualizer()
+		},
+		OnEqualizerPreamp: func(db float64) {
+			a.settings.Update(func(s *settings.Settings) { s.Equalizer.PreampDB = clampDB(db) })
+			a.sendEqualizer()
 		},
 		OnLanguage: func(lang string) {
 			a.settings.Update(func(s *settings.Settings) { s.Language = lang })
@@ -602,6 +629,32 @@ func (a *App) connectToLast() {
 	// The receiver has not been found yet, so its own settings cannot be looked
 	// up and the global ones are used.
 	a.startStreamTo("", []engine.Peer{{Host: host, Port: 7000}})
+}
+
+// sendEqualizer tells a live engine about the current equalizer.
+//
+// A stream that has not started gets it from settings when it does, so nothing
+// is queued for one here.
+func (a *App) sendEqualizer() {
+	c := a.client.Load()
+	if c == nil || !c.Running() {
+		return
+	}
+	if _, err := c.SetEqualizer(a.settings.Current().Equalizer); err != nil {
+		log.Printf("set equalizer: %v", err)
+	}
+}
+
+// clampDB keeps a gain inside what the engine validates, so a slider dragged
+// past the edge does not fail on the engine afterwards.
+func clampDB(db float64) float64 {
+	if db > equalizer.LimitDB {
+		return equalizer.LimitDB
+	}
+	if db < -equalizer.LimitDB {
+		return -equalizer.LimitDB
+	}
+	return db
 }
 
 func (a *App) stopStream() {
