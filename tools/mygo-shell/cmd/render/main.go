@@ -67,6 +67,7 @@ func main() {
 		}{
 			{"idle", idle(), false},
 			{"streaming", streaming(), true},
+			{"pairing", pairing(), false},
 		} {
 			// The panel learns which receiver is playing from the app, not from the
 			// engine, so the shot has to say it the way the app would.
@@ -128,6 +129,14 @@ func main() {
 			}
 		}
 	}
+}
+
+// pairing is a receiver waiting for the PIN it shows on its own screen.
+func pairing() *engine.State {
+	st := engine.NewState()
+	st.Apply(engine.Event{Event: "pin_required", Raw: []byte(
+		`{"event":"pin_required","host":"10.0.10.31"}`)})
+	return st
 }
 
 // idle is the app before anything is playing.

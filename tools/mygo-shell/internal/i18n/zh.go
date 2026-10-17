@@ -95,6 +95,12 @@ var chinese = map[string]string{
 	"Mute the PC speakers while streaming": "播放时静音电脑扬声器",
 	"The sound is being sent to the HomePod, so playing it here too would be the same voice twice, one delayed behind the other.": "声音正在发送到 HomePod，本地再播一遍就是同一个声音两次，其中一次还会慢半拍。",
 
+	// Pairing.
+	"Pairing":                   "配对",
+	"Pair":                      "配对",
+	"Enter the PIN shown on %s": "请输入 %s 上显示的 PIN",
+	"The PIN is on the HomePod's own screen, under the speaker's name. The engine waits for a few minutes.": "PIN 显示在 HomePod 自己的屏幕上，位于音箱名称下方。引擎会等几分钟。",
+
 	// Manual receivers and aliases.
 	"Add one by hand": "手动添加",
 	"Remove":          "移除",

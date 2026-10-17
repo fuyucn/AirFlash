@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
@@ -32,6 +33,11 @@ type Panel struct {
 	// volumeKnown is false until the user has moved the slider, so the control
 	// shows the receiver's own volume rather than claiming one.
 	volumeKnown bool
+
+	// pin is what has been typed into the pairing prompt. It is the panel's
+	// rather than the app's: it lasts as long as the prompt does, and the prompt
+	// is rebuilt every frame.
+	pin string
 }
 
 // NewPanel builds the tray panel view.
@@ -102,6 +108,7 @@ func (p *Panel) View(c *ui.Context) {
 
 	box.Children(func() {
 		p.header(c, pal, cfg, st)
+		p.pairing(c, pal, st)
 		p.receivers(c, pal, st)
 		p.reading(c, pal, cfg, st)
 		p.footer(c, pal)
@@ -218,6 +225,66 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 			p.silenceRow(c, pal, p.deps.State.Snapshot())
 		}
 	})
+}
+
+// pairing is the prompt for the PIN a receiver is waiting for.
+//
+// A HomePod asks for this the first time this PC talks to it, and nothing else
+// in the protocol gets past it: retrying asks for the credentials that just
+// failed. The PIN is on the HomePod's own - the user has to go and read it, so
+// the prompt says which receiver is waiting and how long the engine will give
+// them to go and look.
+//
+// It is drawn in place of the receiver list's idle room rather than as a dialog,
+// because the panel is the surface the user is looking at when a stream starts.
+func (p *Panel) pairing(c *ui.Context, pal palette, st engine.Metrics) {
+	if !st.Pairing {
+		return
+	}
+	which := st.PairingOn
+	if which == "" {
+		which = p.t("the receiver")
+	}
+
+	ui.Column(c).FillWidth().Padding(10, 10, 10, 10).Gap(9).Radius(0).
+		Background(pal.SurfaceHi).
+		BorderWidth(1).BorderStyle(ui.BorderDashed).BorderColor(pal.Warning).
+		Children(func() {
+			ui.Text(c, fmt.Sprintf(p.t("Enter the PIN shown on %s"), which)).
+				FontSize(sizeBody).TextColor(pal.Ink)
+			ui.Text(c, p.t("The PIN is on the HomePod's own screen, under the "+
+				"speaker's name. The engine waits for a few minutes.")).
+				FontSize(sizeSmall).TextColor(pal.InkMuted)
+
+			ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.TextInput(c, &p.pin).Grow(1).Placeholder("0000").
+					Width(120)
+				if ui.PrimaryButton(c, p.t("Pair")).Clicked() && p.deps.OnPairPin != nil {
+					// Digits only, and only as many as a PIN is: the engine
+					// accepts four to eight, and anything else is refused after
+					// a round trip that takes seconds.
+					pin := strings.TrimSpace(p.pin)
+					if digitsOnly(pin) && len(pin) >= 4 && len(pin) <= 8 {
+						p.deps.OnPairPin(pin)
+						p.pin = ""
+					}
+				}
+			})
+		})
+}
+
+// digitsOnly reports whether a PIN is nothing but digits, which is all the
+// engine accepts.
+func digitsOnly(pin string) bool {
+	if pin == "" {
+		return false
+	}
+	for _, r := range pin {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // silenceRow says that the PC is sending no sound at all.

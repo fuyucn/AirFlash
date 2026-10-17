@@ -90,6 +90,12 @@ type Deps struct {
 	OnManualReceiver func(add bool, index int, receiver settings.ManualReceiver, onProblem func(string))
 	// OnAlias names a receiver, or renames it. An empty name removes the name.
 	OnAlias func(receiverID, name string)
+	// OnPairPin sends the PIN the receiver asked for, which completes pairing.
+	// It is the one thing a retry cannot get past on its own.
+	OnPairPin func(pin string)
+	// OnPair starts pairing with a receiver, which is where the PIN prompt
+	// begins.
+	OnPair func(receiver discovery.Receiver)
 }
 
 // page identifies the content shown beside the sidebar.
@@ -932,6 +938,12 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 					if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
 						s.deps.OnPlay(rec)
 					}
+					// Pairing is offered rather than left to a failure: the first
+					// connection to a HomePod asks for a PIN, and finding that out
+					// by pressing Play and reading an error is the slow way round.
+					if ui.Button(c, s.t("Pair")).Clicked() && s.deps.OnPair != nil {
+						s.deps.OnPair(rec)
+					}
 				}
 				// The way to a receiver's own settings. Always there, rather than
 				// only once it has some: otherwise a receiver that has never been
@@ -1443,6 +1455,8 @@ func phaseLabel(words i18n.Translator, p palette, phase engine.StreamPhase) (str
 		return words.T("Playing"), p.Success
 	case engine.PhaseConnecting, engine.PhaseNegotiating:
 		return words.T("Connecting"), p.Warning
+	case engine.PhasePairing:
+		return words.T("Pairing"), p.Warning
 	case engine.PhaseFailed:
 		return words.T("Failed"), p.Danger
 	case engine.PhaseStopped:

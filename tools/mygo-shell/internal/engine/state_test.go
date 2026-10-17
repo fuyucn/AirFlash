@@ -431,3 +431,69 @@ func TestCaptureCountersAreRead(t *testing.T) {
 		t.Errorf("p95 = %v, want 9.2", m.Capture.CaptureToSendP95Ms)
 	}
 }
+
+func TestAPairingRequestIsNotAFailure(t *testing.T) {
+	// The engine's pair command reports a PIN is wanted, and it is still running
+	// and still waiting. Reading it as a failure would make the shell give up on
+	// a connection that is one thing short of working.
+	st := NewState()
+	st.Apply(Event{Event: "pin_required", Raw: []byte(`{"event":"pin_required","host":"10.0.10.31"}`)})
+
+	m := st.Snapshot()
+	if !m.Pairing {
+		t.Fatal("the pairing request was not recorded")
+	}
+	if m.Phase != PhasePairing {
+		t.Errorf("phase = %q, want %q: the engine is waiting, not failed", m.Phase, PhasePairing)
+	}
+	if m.PairingOn != "10.0.10.31" {
+		t.Errorf("pairing on = %q, want the receiver asking", m.PairingOn)
+	}
+	// The last error must stay empty: an error is what the panel would show
+	// instead of the prompt, and the connection has not failed.
+	if st.LastError() != "" {
+		t.Errorf("last error = %q, want none", st.LastError())
+	}
+}
+
+func TestAPairedReceiverStopsAsking(t *testing.T) {
+	st := NewState()
+	st.Apply(Event{Event: "pin_required", Raw: []byte(`{"event":"pin_required","host":"10.0.10.31"}`)})
+	st.Apply(Event{Event: "paired", Raw: []byte(`{"event":"paired","device_id":"42FB06B510BD"}`)})
+
+	m := st.Snapshot()
+	if m.Pairing {
+		t.Error("the pairing request outlived the receiver being paired")
+	}
+	if m.PairingOn != "" {
+		t.Errorf("pairing on = %q, want it cleared", m.PairingOn)
+	}
+}
+
+func TestANewSessionDropsThePairingRequest(t *testing.T) {
+	// Otherwise a fresh stream would open on a prompt for a receiver that has
+	// since been paired to.
+	st := NewState()
+	st.Apply(Event{Event: "pin_required", Raw: []byte(`{"event":"pin_required","host":"10.0.10.31"}`)})
+	st.ResetSession()
+
+	if st.Snapshot().Pairing {
+		t.Error("a new session still carries the last one's pairing request")
+	}
+}
+
+func TestAFailureClearsThePairingRequest(t *testing.T) {
+	// A PIN that timed out arrives as an error, and a prompt for it must not
+	// stay on screen asking for something nobody is waiting on.
+	st := NewState()
+	st.Apply(Event{Event: "pin_required", Raw: []byte(`{"event":"pin_required","host":"10.0.10.31"}`)})
+	st.Apply(Event{Event: "error", Raw: []byte(`{"event":"error","message":"PIN entry timed out"}`)})
+
+	m := st.Snapshot()
+	if m.Pairing {
+		t.Error("the pairing request survived an error")
+	}
+	if m.Phase != PhaseFailed {
+		t.Errorf("phase = %q, want %q", m.Phase, PhaseFailed)
+	}
+}

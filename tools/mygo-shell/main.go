@@ -327,6 +327,18 @@ func (a *App) openWindow(page string) {
 			a.settings.Update(func(s *settings.Settings) { s.SetAlias(id, name) })
 			a.repaint()
 		},
+		OnPairPin: func(pin string) {
+			c := a.client.Load()
+			if c == nil || !c.Running() {
+				return
+			}
+			if _, err := c.PairPin(pin); err != nil {
+				log.Printf("pair pin: %v", err)
+			}
+		},
+		OnPair: func(r discovery.Receiver) {
+			a.pair(r)
+		},
 		// The equalizer's four changes all reach the engine the same way: a live
 		// stream takes it at once, and one that has not started inherits it from
 		// settings when it does.
@@ -548,8 +560,17 @@ func (a *App) panelView() *appui.Panel {
 			}
 		},
 		OnDeviceVolume: a.setDeviceVolume,
-		OnOpenWindow:   a.openWindow,
-		OnQuit:         func() { mygo.App.Quit() },
+		OnPairPin: func(pin string) {
+			c := a.client.Load()
+			if c == nil || !c.Running() {
+				return
+			}
+			if _, err := c.PairPin(pin); err != nil {
+				log.Printf("pair pin: %v", err)
+			}
+		},
+		OnOpenWindow: a.openWindow,
+		OnQuit:       func() { mygo.App.Quit() },
 	})
 }
 
@@ -593,6 +614,42 @@ func defaultRenderEndpoint() string {
 		}
 	}
 	return ""
+}
+
+// pair starts pairing with a receiver, which is what a HomePod asks for the
+// first time this PC talks to it.
+//
+// The engine runs pairing as its own session rather than a phase of a stream, so
+// the engine is started here if it is not already running and the pairing is
+// asked for on its own. The prompt that follows is drawn by the panel from the
+// engine's pin_required event.
+func (a *App) pair(r discovery.Receiver) {
+	if !r.Complete() {
+		return
+	}
+	peers := []engine.Peer{}
+	for _, m := range r.Peers() {
+		peers = append(peers, engine.Peer{Host: m.Host, Port: m.Port})
+	}
+	if len(peers) == 0 {
+		return
+	}
+	c := a.client.Load()
+	if c == nil || !c.Running() {
+		client, err := engine.Start(a.enginePath, a.onEngineEvent)
+		if err != nil {
+			log.Printf("engine start failed: %v", err)
+			return
+		}
+		a.client.Store(client)
+		_, _ = client.Hello()
+		c = client
+	}
+	// A stereo pair is paired to once, through one half: the credentials are the
+	// receiver's and a pair shares them.
+	if _, err := c.Pair(peers[0]); err != nil {
+		log.Printf("pair: %v", err)
+	}
 }
 
 // setDeviceVolume asks the engine to set a receiver's own volume.

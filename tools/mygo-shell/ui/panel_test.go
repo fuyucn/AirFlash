@@ -427,3 +427,72 @@ func TestEveryPageDrawsItsContent(t *testing.T) {
 		}
 	}
 }
+
+// pairingState is a state with a receiver waiting for a PIN.
+func pairingState() *engine.State {
+	st := engine.NewState()
+	st.Apply(engine.Event{Event: "pin_required", Raw: []byte(
+		`{"event":"pin_required","host":"10.0.10.31"}`)})
+	return st
+}
+
+func TestThePanelAsksForAPinRatherThanFailing(t *testing.T) {
+	// A HomePod asks for a PIN the first time this PC talks to it. The engine is
+	// still running and still waiting, so calling it failed would make the shell
+	// give up on a connection that is one thing short of working.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+	panel := NewPanel(panelDeps(pairingState(), []discovery.Receiver{living}, ""))
+	tester := ui.NewTester(panel.View, panelWidth, 600)
+
+	if !tester.HasText("Pairing") {
+		t.Error("the panel does not say a PIN is being waited for")
+	}
+	if tester.HasText("Failed") {
+		t.Error("a pairing request is being reported as a failure")
+	}
+	// The prompt has to name the receiver, so the user knows which speaker to go
+	// and read.
+	if !tester.HasText("Enter the PIN shown on 10.0.10.31") {
+		t.Error("the prompt does not say which receiver is waiting")
+	}
+}
+
+func TestAPinIsOnlySentWhenItLooksLikeOne(t *testing.T) {
+	// The engine accepts four to eight digits and refuses anything else after a
+	// round trip that takes seconds, so the panel does not send one it would
+	// reject.
+	sent := ""
+	panel := NewPanel(panelDeps(pairingState(), nil, ""))
+	panel.deps.OnPairPin = func(pin string) { sent = pin }
+	tester := ui.NewTester(panel.View, panelWidth, 600)
+
+	for _, bad := range []string{"", "12", "abc", "12 34", "12345-"} {
+		sent = ""
+		// The field's own value is reached through the view, so a bad one is
+		// typed in and the button pressed.
+		panel.pin = bad
+		if r, ok := tester.Find("Pair"); ok {
+			tester.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+		}
+		if sent != "" {
+			t.Errorf("PIN %q was sent, want it refused before the round trip", bad)
+		}
+	}
+
+	panel.pin = "1234"
+	if r, ok := tester.Find("Pair"); ok {
+		tester.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	}
+	if sent != "1234" {
+		t.Errorf("PIN sent = %q, want 1234", sent)
+	}
+}
+
+func TestThePromptIsNotShownWhenNothingIsWaiting(t *testing.T) {
+	// A prompt for a receiver that has been paired stays on screen otherwise.
+	panel := NewPanel(panelDeps(streamingState(), nil, ""))
+	tester := ui.NewTester(panel.View, panelWidth, 600)
+	if tester.HasText("Pairing") {
+		t.Error("a pairing prompt is shown while a stream is playing normally")
+	}
+}

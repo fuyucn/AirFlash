@@ -15,8 +15,12 @@ const (
 	PhaseConnecting  StreamPhase = "connecting"
 	PhaseNegotiating StreamPhase = "negotiating"
 	PhaseStreaming   StreamPhase = "streaming"
-	PhaseFailed      StreamPhase = "failed"
-	PhaseStopped     StreamPhase = "stopped"
+	// PhasePairing is a receiver waiting for the four-digit PIN a HomePod shows on
+	// its own screen. Nothing else in AirPlay asks for this, and no number of
+	// retries gets past it: only the user can.
+	PhasePairing StreamPhase = "pairing"
+	PhaseFailed  StreamPhase = "failed"
+	PhaseStopped StreamPhase = "stopped"
 )
 
 // Metrics is the live picture the UI draws.
@@ -80,6 +84,11 @@ type Metrics struct {
 	// the same /info the engine already asks, and it is shown so the user can
 	// tell that the device answering is the one they meant.
 	Model string
+
+	// Pairing is set while a receiver is waiting for a PIN. Host is the receiver
+	// asking, so the prompt can say which speaker is holding up the connection.
+	Pairing   bool
+	PairingOn string
 
 	// Reconnecting is set while a dropped session is being retried, with the
 	// attempt and the total. The engine has no part in this: the retry is the
@@ -198,6 +207,8 @@ func (s *State) ResetSession() {
 	s.metrics.SilentFor = 0
 	s.metrics.HasSilence = false
 	s.metrics.SilentReports = 0
+	s.metrics.Pairing = false
+	s.metrics.PairingOn = ""
 }
 
 // State is the shared, mutex-guarded app model.
@@ -322,7 +333,27 @@ func (s *State) Apply(ev Event) {
 			s.metrics.Model = info.Model
 		}
 		s.metrics.Phase = PhaseNegotiating
+	case "pin_required":
+		// The engine's pair command reports this when a receiver has no stored
+		// credentials for this machine, which is what a HomePod does the first
+		// time. It is a phase of its own: the engine is still running and still
+		// waiting, and calling this a failure would make the shell give up on a
+		// connection that is waiting for one thing only.
+		var pin struct {
+			Host string
+		}
+		if json.Unmarshal(ev.Raw, &pin) == nil {
+			s.metrics.PairingOn = pin.Host
+		}
+		s.metrics.Pairing = true
+		s.metrics.Phase = PhasePairing
+		s.metrics.Detail = ""
+	case "paired":
+		s.metrics.Pairing = false
+		s.metrics.PairingOn = ""
+		s.metrics.Phase = PhaseNegotiating
 	case "negotiated", "handshake_complete":
+		s.metrics.Pairing = false
 		s.metrics.Phase = PhaseNegotiating
 	case "capture_metrics":
 		// The local capture side, once a second. Two things are read from it:
@@ -508,6 +539,10 @@ func (s *State) Apply(ev Event) {
 			s.lastErr = e.Message
 			s.metrics.Detail = e.Message
 			s.metrics.Phase = PhaseFailed
+			// A PIN that timed out arrives as an error. The prompt has to go with
+			// it, or the panel keeps asking for a PIN nobody is waiting on.
+			s.metrics.Pairing = false
+			s.metrics.PairingOn = ""
 		}
 	}
 }
