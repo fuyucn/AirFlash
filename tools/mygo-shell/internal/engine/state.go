@@ -23,6 +23,30 @@ const (
 	PhaseStopped StreamPhase = "stopped"
 )
 
+// phaseOf maps one of the engine's phase names to the phases the interface
+// knows.
+//
+// The engine names its steps after the AirPlay protocol it is working through:
+// "info", "authenticate", "authenticated", "setup_session", "setup_audio".
+// Those are its internals, and none of them is one of the phases the shell
+// draws - so taking them as they arrive leaves the interface showing "Idle"
+// for a connection that is very much in progress, which reads as nothing
+// happening. Everything the engine says before audio flows is a connection
+// being made, which is what PhaseConnecting means here.
+//
+// A name this does not recognise keeps its own value, so a phase added to the
+// engine later still reaches the interface as itself rather than as a guess.
+func phaseOf(name string) StreamPhase {
+	switch name {
+	case "info", "authenticate", "authenticated",
+		"setup_session", "setup_audio", "negotiating", "handshake_complete":
+		return PhaseConnecting
+	case "negotiated":
+		return PhaseNegotiating
+	}
+	return StreamPhase(name)
+}
+
 // Metrics is the live picture the UI draws.
 //
 // The numbers here are the ones that explain a stutter: the receiver's own
@@ -304,8 +328,8 @@ func (s *State) Apply(ev Event) {
 			Phase string `json:"phase"`
 		}
 		if json.Unmarshal(ev.Raw, &p) == nil {
-			s.metrics.Phase = StreamPhase(p.Phase)
 			s.metrics.Detail = p.Phase
+			s.metrics.Phase = phaseOf(p.Phase)
 		}
 	case "streaming":
 		var st struct {

@@ -256,7 +256,12 @@ func (a *App) dueToPaint(nowMs int64) bool {
 }
 
 func (a *App) openWindow(page string) {
-	if w := a.win.Load(); w != nil {
+	// A window the platform has already destroyed must not be shown again:
+	// Show on a dead window does nothing at all, which is what leaves the
+	// tray unable to bring the window back after its close button closed it.
+	// The close hook clears a.win, so this is the second line of defence for
+	// a close that arrives from somewhere else.
+	if w := a.win.Load(); w != nil && !w.IsDestroyed() {
 		w.Show()
 		w.Focus()
 		return
@@ -291,6 +296,12 @@ func (a *App) openWindow(page string) {
 			// is also what frees a webview's process tree when switching away.
 			a.life.Close()
 			a.openWindow(page)
+		},
+		OnSampleRate: func(rate int) {
+			// A new rate applies to the next stream: the engine is asked for the
+			// rate when a session starts, so the one running keeps the rate it
+			// was started at rather than being re-asked mid-stream.
+			a.settings.Update(func(s *settings.Settings) { s.SampleRate = rate })
 		},
 		OnReceiverOption: func(id, field string, value any) {
 			a.settings.Update(func(s *settings.Settings) {
@@ -447,6 +458,16 @@ func (a *App) openWindow(page string) {
 	if err := w.SetIcon(trayIcon()); err != nil {
 		log.Printf("window icon: %v", err)
 	}
+	// The window's own close button. Without this the window is destroyed by
+	// the platform with nothing here to hear about it, so a.win keeps pointing
+	// at a window that is gone: the next openWindow takes the Show branch on a
+	// dead window and shows nothing, which is the tray being unable to bring
+	// the window back after it was closed.
+	w.OnClose(func(e *mygo.CloseEvent) {
+		a.life.Close()
+		// Nothing is quit here: a tray app stays resident with no window, and
+		// the engine keeps playing.
+	})
 	a.win.Store(w)
 }
 

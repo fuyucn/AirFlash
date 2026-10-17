@@ -20,6 +20,10 @@ a latent risk the current code happens not to hit.
 | P1 | `main.go` `trayIcon` | returned nil: `embeddedIcon` was a variable nothing ever assigned, and the asset build the comment named did not exist. The app ran with no icon in the notification area | the icon is drawn in `internal/trayicon` |
 | P1 | `internal/engine/spawn_attrs_windows.go` | the engine is a console-subsystem binary and the shell a GUI app, so pressing Play opened a blank console window that stayed for as long as the engine ran | `CREATE_NO_WINDOW` |
 | P1 | `ui/shell.go` `receiversPage` | Pair was offered on every row while anything was streaming. The engine's `pair` does `running.take()` and drops it, so pressing Pair stopped the audio in order to ask for a PIN | moved into the receiver's own controls |
+| P0 | `main.go` `openWindow` | the window's own close button was never wired to the lifecycle, so `a.win` kept pointing at a window the platform had destroyed. The next `openWindow` took its `Show` branch on a dead window, which does nothing: after closing the window the tray could not bring it back | `w.OnClose` drives `life.Close`, and `openWindow` also refuses a window `IsDestroyed` reports |
+| P1 | `internal/engine/state.go` `phase` | the engine names its phases after the AirPlay protocol (`info`, `authenticate`, `setup_session`), none of which is a phase the interface draws. Taken as they arrived, a connection in progress showed as Idle | `phaseOf` maps the protocol steps to connecting; the engine's own name is kept in `Detail` |
+| P1 | `ui/shell.go` `settingsPage` | the sample-rate control was declared as `OnSampleRate` and never passed by `main.go`, so it moved the interface and changed nothing | wired to the settings, which the engine is asked for when a session starts |
+| P1 | `internal/settings/settings.go` `Update` | a write that failed was discarded, so a setting the user made could be gone at the next launch with nothing said. The interface still changed, which made it look saved | `WriteErr` records it and the settings page shows it |
 
 ## Open
 

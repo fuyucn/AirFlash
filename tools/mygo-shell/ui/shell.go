@@ -280,7 +280,7 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 		case pageEqualizer:
 			s.equalizerPage(c, p, cfg)
 		case pageSettings:
-			s.settingsPage(c, p, cfg)
+			s.settingsPage(c, p, cfg, st)
 		}
 	})
 }
@@ -691,10 +691,6 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 				}
 			})
 		})
-
-		// Latency: Auto, or a fixed choice. Auto is the default because the
-		// number depends on the network at the time, which the user cannot know.
-		s.latencyControl(c, p, cfg, st)
 
 		// No Play or Stop here. A Stats page is for reading what the numbers
 		// are; which receiver to play to is the panel's and the Receivers page's
@@ -1301,8 +1297,6 @@ func (s *Shell) devicePicker(c *ui.Context, p palette, d devicePicker) {
 		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 }
 
-// settingsPage holds the mode switch, which is the one setting that changes
-// what the app costs to run.
 // equalizerPage is the ten-band graphic equalizer.
 //
 // The presets are the desktop host's own curves and its own numbers, so a person
@@ -1411,7 +1405,14 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 // the right one is obvious rather than a guess among Ethernet 2, Ethernet 3 and
 // Wi-Fi.
 
-func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
+// settingsPage is where the app is configured: how much it costs to run, how
+// much delay to ask the network for, what to record from and where to look.
+//
+// Every change here is written to disk as it is made, so there is nothing to
+// confirm and no button to press. The one thing worth showing is a write that
+// failed, because the interface still changes and the next launch would not
+// have the setting.
+func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(26).Children(func() {
 		// The mode switch, which is the one setting that changes what the app
 		// costs to run.
@@ -1434,6 +1435,14 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			ui.Text(c, s.t("Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
 				"either way.")).FontSize(sizeSmall).TextColor(p.InkMuted)
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+		// Latency. It belongs here rather than on Stats: it is a setting the
+		// user chooses once, not a reading they come back to. Stats shows what
+		// the current target is; this is where it is changed.
+		ui.Column(c).Gap(8).Children(func() {
+			s.latencyControl(c, p, cfg, st)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
@@ -1569,6 +1578,15 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 				"the engine is a separate process, and the app stays in the tray.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
+
+		// Every setting here is written as it is changed, so there is nothing
+		// to save and no button to press. What is worth saying is when a write
+		// failed: the control moves and the interface changes, so without this
+		// the only sign would be the setting being gone at the next launch.
+		if err := s.deps.Settings.WriteErr(); err != nil {
+			ui.Text(c, fmt.Sprintf(s.t("Settings could not be saved: %v"), err)).
+				FontSize(sizeSmall).TextColor(p.Danger)
+		}
 	})
 }
 

@@ -654,3 +654,16 @@ func TestPairIsOfferedInTheReceiversOwnControls(t *testing.T) {
 		t.Errorf("Pair fired %d times, want once", paired)
 	}
 }
+
+func TestEveryInterfaceStringHasAChineseEntryForTheSettingsPage(t *testing.T) {
+	// The settings page is the one place a user goes to change how the app
+	// behaves, and a line of English in a Chinese interface reads as a string
+	// that was forgotten rather than translated.
+	for _, key := range []string{
+		"Settings could not be saved: %v",
+	} {
+		if tru := i18n.For(i18n.Chinese); tru.T(key) == key {
+			t.Errorf("%q has no Chinese entry, so it would show English", key)
+		}
+	}
+}

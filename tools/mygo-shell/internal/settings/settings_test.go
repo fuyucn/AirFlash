@@ -440,3 +440,31 @@ func TestEveryBoundedFieldIsBounded(t *testing.T) {
 		t.Errorf("a value below every floor was not raised: %+v", low)
 	}
 }
+
+func TestASettingThatCouldNotBeWrittenIsReported(t *testing.T) {
+	// A setting the user made that did not reach the disk is the one failure
+	// they cannot see: the control moved, the interface changed, and nothing
+	// says the next launch will not have it. A path that cannot be created
+	// makes the write fail, which is what a full or read-only disk does.
+	store := Open(filepath.Join(t.TempDir(), "settings.json"))
+	if store.WriteErr() != nil {
+		t.Fatalf("a fresh store reports %v, want no error", store.WriteErr())
+	}
+	store.Update(func(s *Settings) { s.LatencyMs = 250 })
+	if err := store.WriteErr(); err != nil {
+		t.Errorf("a good write reported %v", err)
+	}
+
+	// The same directory used as the file's path: the write cannot land.
+	blocked := t.TempDir()
+	bad := Open(blocked)
+	bad.Update(func(s *Settings) { s.LatencyMs = 300 })
+	if bad.WriteErr() == nil {
+		t.Error("a write that could not land reported no error, so the user is told nothing")
+	}
+	// The setting is still in effect for this run: a failed write loses the
+	// setting for the next launch, not this one.
+	if got := bad.Current().LatencyMs; got != 300 {
+		t.Errorf("latency = %d, want 300 while the app runs", got)
+	}
+}

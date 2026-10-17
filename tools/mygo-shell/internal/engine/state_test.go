@@ -497,3 +497,35 @@ func TestAFailureClearsThePairingRequest(t *testing.T) {
 		t.Errorf("phase = %q, want %q", m.Phase, PhaseFailed)
 	}
 }
+
+func TestTheEnginesProtocolStepsReadAsAConnectionBeingMade(t *testing.T) {
+	// The engine names its phases after the AirPlay protocol it works through:
+	// info, authenticate, setup_session. None of those is a phase the interface
+	// draws, so taking them as they arrive leaves it showing "Idle" for a
+	// connection that is in progress - which reads as nothing happening.
+	for _, step := range []string{
+		"info", "authenticate", "authenticated", "setup_session", "setup_audio",
+		"negotiating", "handshake_complete",
+	} {
+		st := NewState()
+		st.Apply(Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"` + step + `"}`)})
+		if got := st.Snapshot().Phase; got != PhaseConnecting {
+			t.Errorf("phase %q = %q, want connecting", step, got)
+		}
+		// The engine's own name is still kept: it is what a log line says.
+		if got := st.Snapshot().Detail; got != step {
+			t.Errorf("detail for %q = %q, want the engine's own name", step, got)
+		}
+	}
+}
+
+func TestAPhaseTheShellKnowsIsTakenAsItIs(t *testing.T) {
+	// A name this does not recognise is not guessed at: it reaches the
+	// interface as itself, so a phase the engine gains later shows up as that
+	// rather than as a wrong one of these.
+	st := NewState()
+	st.Apply(Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"restarting"}`)})
+	if got := st.Snapshot().Phase; got != StreamPhase("restarting") {
+		t.Errorf("phase = %q, want the engine's own", got)
+	}
+}

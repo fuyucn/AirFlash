@@ -192,6 +192,12 @@ type Store struct {
 	mu   sync.Mutex
 	path string
 	cur  Settings
+
+	// writeErr is why the last write failed, or nil. A setting the user made
+	// that did not reach the disk is the one failure they cannot see: the
+	// control moved, the interface changed, and nothing says the next launch
+	// will not have it.
+	writeErr error
 }
 
 // Open loads settings, falling back to the defaults when the file is absent or
@@ -234,9 +240,20 @@ func (s *Store) Update(fn func(*Settings)) Settings {
 
 	if b, err := json.MarshalIndent(cur, "", "  "); err == nil {
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		_ = os.WriteFile(path, b, 0o644)
+		if err := os.WriteFile(path, b, 0o644); err != nil {
+			s.mu.Lock()
+			s.writeErr = err
+			s.mu.Unlock()
+		}
 	}
 	return cur
+}
+
+// WriteErr is why the last change did not reach the disk, or nil when it did.
+func (s *Store) WriteErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writeErr
 }
 
 // clamp keeps a value inside the range the engine accepts, and is the one place

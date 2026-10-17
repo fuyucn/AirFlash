@@ -161,4 +161,7 @@ var chinese = map[string]string{
 	"Buffer underruns":                       "缓冲欠载",
 	"SAMPLE RATE":                            "采样率",
 	"A new rate applies to the next stream.": "新采样率在下次开始播放时生效。",
+	"44.1 kHz":                               "44.1 kHz",
+	"48 kHz":                                 "48 kHz",
+	"Settings could not be saved: %v":        "设置无法保存：%v",
 }
