@@ -260,12 +260,62 @@ func trimInstance(name string) string {
 	if i := strings.Index(name, "@"); i > 0 {
 		name = name[i+1:]
 	}
-	name = strings.TrimSuffix(name, ".")
 	for _, suffix := range []string{"._airplay._tcp.local", "._raop._tcp.local", "._tcp.local", ".local"} {
 		name = strings.TrimSuffix(name, suffix)
 	}
 	name = strings.TrimSuffix(name, ".")
-	return strings.TrimSpace(name)
+	// DNS-SD presentation escaping last. A device the user named "Living Room"
+	// or "Living Room (2)" is advertised on the wire with a backslash before
+	// every space, dot and parenthesis, and miekg/dns keeps that escaping in the
+	// name it hands back. The backslashes are protocol, not part of the name, so
+	// they are dropped and the character after each one kept as itself.
+	return strings.TrimSpace(unescapeDNSSD(name))
+}
+
+// unescapeDNSSD removes DNS-SD presentation escaping: a backslash followed by a
+// character is that character literally. A backslash before a "." keeps the dot
+// from being read as a label separator, and one before a space or parenthesis is
+// how those are carried at all, so all of them collapse to the plain character.
+//
+// A decimal escape such as "\032" (a space by its ASCII code) is also valid
+// DNS-SD and is decoded the same way.
+func unescapeDNSSD(name string) string {
+	if !strings.Contains(name, "\\") {
+		return name
+	}
+	out := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		if name[i] != '\\' || i+1 >= len(name) {
+			out = append(out, name[i])
+			continue
+		}
+		// A three-digit decimal escape is one character.
+		if i+3 < len(name) && isDigit(name[i+1]) && isDigit(name[i+2]) && isDigit(name[i+3]) {
+			if v, ok := parseDecimal(name[i+1 : i+4]); ok {
+				out = append(out, byte(v))
+				i += 3
+				continue
+			}
+		}
+		// Otherwise the escaped character stands for itself.
+		i++
+		out = append(out, name[i])
+	}
+	return string(out)
+}
+
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+// parseDecimal reads exactly three digits as a byte value.
+func parseDecimal(s string) (int, bool) {
+	v := 0
+	for i := 0; i < 3; i++ {
+		if !isDigit(s[i]) {
+			return 0, false
+		}
+		v = v*10 + int(s[i]-'0')
+	}
+	return v, true
 }
 
 // identity is the device id, which is what tells two advertisements of one
