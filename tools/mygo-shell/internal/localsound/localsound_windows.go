@@ -165,6 +165,19 @@ const (
 	rpcEChangedMode = 0x80010106
 )
 
+// windowsGetCurrentThreadID is kernel32's GetCurrentThreadId, which returns the
+// id of the thread the caller is running on. It is the key an apartment is filed
+// under, because an apartment belongs to a thread and not to a goroutine.
+var (
+	kernel32               = syscall.NewLazyDLL("kernel32.dll")
+	procGetCurrentThreadID = kernel32.NewProc("GetCurrentThreadId")
+)
+
+func windowsGetCurrentThreadID() uint32 {
+	r, _, _ := procGetCurrentThreadID.Call()
+	return uint32(r)
+}
+
 func coInitializeEx(reserved, coinit uintptr) error {
 	hr, _, _ := procCoInitializeEx.Call(reserved, coinit)
 	if hr == rpcEChangedMode {
@@ -221,17 +234,64 @@ type propVariant struct {
 }
 
 var (
-	comOnce sync.Once
-	comErr  error
+	// apartments holds the goroutine ids that have joined a COM apartment.
+	//
+	// CoInitializeEx is per thread, and a Go goroutine is not pinned to one: the
+	// same goroutine can be resumed on a different OS thread, which has its own
+	// apartment. So the check is "has this goroutine initialised on whatever
+	// thread it is on now", keyed by the pair rather than by either one alone.
+	//
+	// Initialising once for the whole process - which is what this did before -
+	// leaves every call after the first on a thread that never joined an
+	// apartment. The mute is called from the engine's event goroutine and from the
+	// UI thread, and one of the two was running inside an apartment the other had
+	// opened, which is undefined on Windows: it fails with CO_E_NOTINITIALIZED,
+	// and the silence silently does not happen.
+	apartments sync.Map
 )
 
-// withCom runs one COM call, initialising COM first if nobody has.
+// withCom runs one COM call inside a COM apartment on the calling goroutine's
+// current thread, joining one first if that thread has not.
+//
+// An error from joining is returned rather than ignored, because a call made
+// outside an apartment is the failure this exists to prevent: it does not
+// announce itself, the objects simply answer CO_E_NOTINITIALIZED and the silence
+// quietly does not happen.
 func withCom(fn func() error) error {
-	comOnce.Do(func() { comErr = coInitializeEx(0, coinitMultithreaded) })
-	if comErr != nil {
-		return comErr
+	if err := joinApartment(); err != nil {
+		return err
 	}
 	return fn()
+}
+
+// apartmentKey identifies a goroutine on the thread it is running on.
+//
+// The runtime does not expose a goroutine id, and reading it out of a stack is a
+// hack that breaks on any release. What is stable is the thread id, which is what
+// the apartment actually belongs to: a goroutine that moves to another thread
+// finds that thread uninitialised and joins it there, which is correct and costs
+// one extra call per thread rather than one per call.
+func apartmentKey() uint64 {
+	return uint64(windowsGetCurrentThreadID())
+}
+
+// joinApartment joins a COM apartment on the current thread if it has not.
+//
+// No matching CoUninitialize: the runtime may move a goroutine to another thread
+// and back, so a balanced pair would leave a thread uninitialised on a later
+// call and reintroduce the failure this prevents. One initialisation per thread
+// is a bounded amount of state - threads are created by the Go runtime as it
+// needs them, not per call - and it is released when the process exits.
+func joinApartment() error {
+	key := apartmentKey()
+	if _, ok := apartments.Load(key); ok {
+		return nil
+	}
+	if err := coInitializeEx(0, coinitMultithreaded); err != nil {
+		return err
+	}
+	apartments.Store(key, struct{}{})
+	return nil
 }
 
 // enumerator builds the device enumerator.

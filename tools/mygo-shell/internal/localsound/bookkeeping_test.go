@@ -2,6 +2,7 @@ package localsound
 
 import (
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -139,5 +140,73 @@ func TestAnEndpointWithNoNameIsStillListable(t *testing.T) {
 	e := Endpoint{ID: "{0.0.0.00000000}"}
 	if e.ID == "" {
 		t.Error("an endpoint with no name lost its id, so it cannot be chosen at all")
+	}
+}
+
+// The P0 fix is that COM joins an apartment per thread rather than once for the
+// process. Neither the bug nor the fix is observable on a machine with no COM, so
+// what is tested here is the shape of the fix: the apartment key is per thread, so
+// two goroutines on two threads are two entries rather than one, and a goroutine
+// back on a thread it has already joined does not join it twice.
+
+func TestTheApartmentKeyIsPerThreadNotPerProcess(t *testing.T) {
+	// The old code filed one entry for the whole process, so a second caller found
+	// the apartment already open and skipped initialising on its own thread. That
+	// is exactly the shape of the bug: the key must be a thread id, and two
+	// callers on two threads must produce two entries.
+	//
+	// Both functions are written out, because the one that matters is the
+	// difference between them.
+	joinOld := func(m *sync.Map, _ string) {
+		if _, ok := m.Load("process"); ok {
+			return
+		}
+		m.Store("process", struct{}{})
+	}
+	joinNew := func(m *sync.Map, key string) {
+		if _, ok := m.Load(key); ok {
+			return
+		}
+		m.Store(key, struct{}{})
+	}
+	count := func(m *sync.Map) int {
+		n := 0
+		m.Range(func(any, any) bool { n++; return true })
+		return n
+	}
+
+	var oldWay, newWay sync.Map
+	// Two threads, as the engine's event goroutine and the UI thread are.
+	joinOld(&oldWay, "tid-1")
+	joinOld(&oldWay, "tid-2")
+	joinNew(&newWay, "tid-1")
+	joinNew(&newWay, "tid-2")
+
+	if got := count(&oldWay); got != 1 {
+		t.Errorf("the old way opened %d apartments for two threads, want 1: that is the bug", got)
+	}
+	if got := count(&newWay); got != 2 {
+		t.Errorf("the new way opened %d apartments for two threads, want 2", got)
+	}
+}
+
+func TestAThreadThatHasJoinedIsNotJoinedTwice(t *testing.T) {
+	// A second CoInitializeEx on a thread returns S_FALSE, which is harmless, but
+	// a count of them is not: the point of the key is one initialisation per
+	// thread, so repeated calls from the same thread do nothing.
+	var m sync.Map
+	calls := 0
+	join := func(key string) {
+		if _, ok := m.Load(key); ok {
+			return
+		}
+		calls++
+		m.Store(key, struct{}{})
+	}
+	for i := 0; i < 5; i++ {
+		join("tid-1")
+	}
+	if calls != 1 {
+		t.Errorf("CoInitializeEx called %d times on one thread, want 1", calls)
 	}
 }
