@@ -334,3 +334,53 @@ func TestDisplayModelLeavesWhatItDoesNotKnowAlone(t *testing.T) {
 		t.Errorf("no code = %q, want nothing", got)
 	}
 }
+
+func TestTheTrailingDotOnAnInstanceNameIsRemoved(t *testing.T) {
+	// hashicorp/mdns reports the fully qualified name, which ends in a dot. A
+	// suffix trim that does not account for it leaves the dot on, and the panel
+	// shows "Living Room._airplay._tcp.local." as the device's name.
+	got := Fold([]Record{
+		{Instance: "Living Room._airplay._tcp.local.", Type: ServiceAirPlay,
+			Address: "10.0.10.31", Port: 7000, TXT: map[string]string{"deviceid": "42FB06B510BD"}},
+	})
+	if len(got) != 1 {
+		t.Fatalf("%d receivers, want 1", len(got))
+	}
+	if got[0].Name != "Living Room" {
+		t.Errorf("name = %q, want Living Room", got[0].Name)
+	}
+}
+
+func TestTwoRecordsOfOneDeviceThatDisagreeOnTheIdStillFold(t *testing.T) {
+	// One device is one receiver. When its two records carry different device
+	// ids - a browse that caught only some of a device's TXT, or a device that
+	// advertises a MAC with separators on one service and without on the other -
+	// folding them apart lists the same speaker twice, each with its own Play.
+	// The address is what every record of a device agrees on, so it decides.
+	got := Fold([]Record{
+		{Instance: "Living Room._airplay._tcp.local.", Type: ServiceAirPlay,
+			Address: "10.0.10.31", Port: 7000, TXT: map[string]string{"deviceid": "42FB:06B5:10BD"}},
+		{Instance: "x@Living Room._raop._tcp.local.", Type: ServiceRAOP,
+			Address: "10.0.10.31", Port: 7000, TXT: map[string]string{"deviceid": "AABBCCDDEEFF"}},
+	})
+	if len(got) != 1 {
+		t.Fatalf("%d receivers, want 1: the same address is one device", len(got))
+	}
+	if got[0].Name != "Living Room" {
+		t.Errorf("name = %q, want Living Room", got[0].Name)
+	}
+}
+
+func TestDevicesAtDifferentAddressesStaySeparateReceivers(t *testing.T) {
+	// The address-based fallback must not collapse two speakers into one: they
+	// are at different addresses, which is what the fallback keys on.
+	got := Fold([]Record{
+		{Instance: "Living Room._airplay._tcp.local.", Type: ServiceAirPlay,
+			Address: "10.0.10.31", Port: 7000, TXT: map[string]string{"deviceid": "42FB06B510BD"}},
+		{Instance: "Study._airplay._tcp.local.", Type: ServiceAirPlay,
+			Address: "10.0.10.44", Port: 7000, TXT: map[string]string{"deviceid": "7E5B712836F4"}},
+	})
+	if len(got) != 2 {
+		t.Errorf("%d receivers, want 2", len(got))
+	}
+}

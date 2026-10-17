@@ -80,6 +80,10 @@ type device struct {
 // can be tested without a network.
 func Fold(records []Record) []Receiver {
 	byID := map[string]*device{}
+	// byEndpoint is the address each folded device was first seen at, which is
+	// what tells two records of one device apart from records of two devices that
+	// happen to share an id.
+	byEndpoint := map[string]string{}
 	var order []string
 
 	for _, rec := range ordered(records) {
@@ -87,10 +91,25 @@ func Fold(records []Record) []Receiver {
 		if id == "" {
 			id = endpoint(rec)
 		}
+		// One address is one device. Two records that disagree about the device
+		// id - one carrying it and one not, which is what a browse that catches
+		// only some of a device's TXT records produces - are still one speaker,
+		// and folding them apart leaves the same name listed twice with a Play
+		// for each. The address is the one thing every record of a device agrees
+		// on, so it decides when the ids do not.
+		if id != endpoint(rec) {
+			for _, seen := range order {
+				if byEndpoint[seen] == rec.Address {
+					id = seen
+					break
+				}
+			}
+		}
 		d, ok := byID[id]
 		if !ok {
 			d = &device{id: id}
 			byID[id] = d
+			byEndpoint[id] = rec.Address
 			order = append(order, id)
 		}
 		d.records = append(d.records, rec)
@@ -224,14 +243,28 @@ func displayName(records []Record) string {
 	return ""
 }
 
-// trimInstance removes the MAC prefix and the service suffix mDNS appends.
+// trimInstance reduces an mDNS instance name to the name the user gave it.
+//
+// An instance name as a browse reports it is not the name: it carries a MAC
+// prefix on RAOP ("42FB06B510BD@Living Room"), the service type it was
+// advertised as ("._airplay._tcp"), the domain, and a trailing dot that the
+// DNS layer leaves on the fully qualified name. All of that is protocol, not
+// something the person typed into the Home app.
+//
+// The trailing dot is the one that is easy to miss: "Living Room._airplay._tcp.local"
+// is not a suffix of "Living Room._airplay._tcp.local.", so a naive trim leaves
+// it there and the panel shows a name ending in a dot.
 func trimInstance(name string) string {
+	// The trailing dot first, or nothing below matches a fully qualified name.
+	name = strings.TrimSuffix(name, ".")
 	if i := strings.Index(name, "@"); i > 0 {
 		name = name[i+1:]
 	}
+	name = strings.TrimSuffix(name, ".")
 	for _, suffix := range []string{"._airplay._tcp.local", "._raop._tcp.local", "._tcp.local", ".local"} {
 		name = strings.TrimSuffix(name, suffix)
 	}
+	name = strings.TrimSuffix(name, ".")
 	return strings.TrimSpace(name)
 }
 

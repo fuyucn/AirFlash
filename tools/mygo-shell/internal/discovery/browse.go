@@ -95,6 +95,11 @@ func Browse(ctx context.Context, onInterface int, onChange func([]Receiver), onE
 					return
 				}
 				rec := recordFrom(entry)
+				// Not an AirPlay service, so not a receiver: a Spotify Connect
+				// speaker or a smart-home hub that answered on the same channel.
+				if rec.Type == "" {
+					continue
+				}
 				if rec.Address == "" {
 					continue
 				}
@@ -186,7 +191,15 @@ func recordFrom(entry *mdns.ServiceEntry) Record {
 }
 
 // serviceTypeOf recovers which service a record came from. hashicorp/mdns
-// reports the instance name, which carries the type as its suffix.
+// reports the instance name, which carries the type as its suffix, or "" when it
+// carries neither.
+//
+// Returning "" rather than defaulting to AirPlay is the whole point: a browse for
+// _airplay._tcp can pick up records for other services - a Spotify Connect
+// speaker, an Aqara hub, a HomeKit accessory - because they answer on the same
+// multicast channel. None of those is a receiver this app can play to. Marking
+// them AirPlay folds them into the list as devices with a Play button that
+// connects to nothing, so they are dropped instead.
 func serviceTypeOf(name string) string {
 	switch {
 	case strings.Contains(name, ServiceAirPlay):
@@ -194,7 +207,7 @@ func serviceTypeOf(name string) string {
 	case strings.Contains(name, ServiceRAOP):
 		return ServiceRAOP
 	}
-	return ServiceAirPlay
+	return ""
 }
 
 // PresenceTimeout is how long a receiver may be silent before it is reported as
