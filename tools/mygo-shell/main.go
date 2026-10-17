@@ -33,6 +33,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/localsound"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/trayicon"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
 )
 
@@ -439,6 +440,13 @@ func (a *App) openWindow(page string) {
 		Content:         ui.View(view.View),
 	}
 	w := mygo.NewWindow(opts)
+	// The window's own icon, in its title bar and on its taskbar button. A window
+	// without one shows the host application's default, which on a Go program is
+	// the generic executable mark - so an app with a tray logo and no window logo
+	// looks like two different programs.
+	if err := w.SetIcon(trayIcon()); err != nil {
+		log.Printf("window icon: %v", err)
+	}
 	a.win.Store(w)
 }
 
@@ -1029,13 +1037,5 @@ func besideEnginePath() string {
 // trayIcon returns a small PNG, or nil when none is embedded. A missing icon
 // is not fatal: the tray is reported and skipped.
 func trayIcon() []byte {
-	if len(embeddedIcon) == 0 {
-		return nil
-	}
-	return embeddedIcon
+	return trayicon.PNG()
 }
-
-// embeddedIcon is filled in by an asset build, if one is present.
-var embeddedIcon []byte
-
-var _ = time.Now
