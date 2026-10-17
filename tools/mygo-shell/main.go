@@ -936,6 +936,16 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	if !r.Complete() {
 		return
 	}
+	// Playing to the receiver that is already playing is not a second request
+	// to hear it: it is a request the engine cannot honour. Its start takes over
+	// whatever session is running and drops it, so a second Play on the same
+	// device cancels the stream that was working and leaves two session loops
+	// racing - which ends in a failure the user did nothing to earn.
+	//
+	// The row shows Stop for this receiver, so this is the guard behind it.
+	if playing := a.playing.Load(); playing != nil && *playing == r.ID {
+		return
+	}
 	var peers []engine.Peer
 	for _, m := range r.Peers() {
 		peers = append(peers, engine.Peer{Host: m.Host, Port: m.Port})

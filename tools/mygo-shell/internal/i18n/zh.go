@@ -33,6 +33,7 @@ var chinese = map[string]string{
 	"pair incomplete":          "配对不完整",
 	"Play":                     "播放",
 	"Stop":                     "停止",
+	"Disconnect":               "断开连接",
 	"VOL":                      "音量",
 
 	// Readings.

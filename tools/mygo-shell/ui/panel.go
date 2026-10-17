@@ -165,18 +165,22 @@ func (p *Panel) receivers(c *ui.Context, pal palette, st engine.Metrics) {
 	// Which receiver is playing, in the engine's own terms: it streams to the
 	// hosts of one receiver, so a receiver is playing when its hosts are the
 	// ones being sent to.
-	playing := st.Phase == engine.PhaseStreaming
+	//
+	// The phase is not what decides it. A receiver that has been asked to play
+	// is connected from the moment it is asked until the session ends, and
+	// gating on PhaseStreaming made the row lose its Stop while the connection
+	// was still being made - which is exactly when a second Play would cancel
+	// the one under way. So the receiver the app is playing to is the answer,
+	// whatever phase it is in.
 	playingID := ""
-	if playing {
-		if rec := p.deps.PlayingReceiver(); rec != nil {
-			playingID = rec.ID
-		}
+	if rec := p.deps.PlayingReceiver(); rec != nil {
+		playingID = rec.ID
 	}
 
 	ui.Column(c).FillWidth().Gap(0).Children(func() {
 		for _, r := range found {
 			rec := r
-			p.receiverRow(c, pal, rec, playing && rec.ID == playingID)
+			p.receiverRow(c, pal, rec, playingID != "" && rec.ID == playingID)
 		}
 	})
 }
@@ -223,7 +227,11 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 				// than offering a Play that would time out.
 				ui.Text(c, p.t("offline")).FontSize(sizeSmall).TextColor(pal.InkMuted)
 			case playing:
-				if ui.Button(c, p.t("Stop")).Clicked() && p.deps.OnStop != nil {
+				// Disconnect, not Stop: what the button ends is the connection to
+				// this receiver, which is what the row above it says. "Stop" reads
+				// as pausing something that is playing, and the receiver stays
+				// connected either way.
+				if ui.Button(c, p.t("Disconnect")).Clicked() && p.deps.OnStop != nil {
 					p.deps.OnStop()
 				}
 			default:

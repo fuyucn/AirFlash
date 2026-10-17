@@ -896,10 +896,11 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 		// it rather than a Play that would start a second session the engine
 		// cannot run.
 		playingID := ""
-		if st.Phase == engine.PhaseStreaming {
-			if rec := s.playingReceiver(); rec != nil {
-				playingID = rec.ID
-			}
+		// The receiver the app is playing to, whatever phase it is in: a receiver
+		// that was asked to play keeps its Stop while the connection is still being
+		// made, which is when a second Play would cancel the one under way.
+		if rec := s.playingReceiver(); rec != nil {
+			playingID = rec.ID
 		}
 
 		for _, r := range found {
@@ -942,7 +943,11 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 				// cases that only repeated them are gone.
 				switch {
 				case isPlaying:
-					if ui.Button(c, s.t("Stop")).Clicked() && s.deps.OnStop != nil {
+					// Disconnect, not Stop: what the button ends is the connection to
+					// this receiver, which is what the row above it says. "Stop" reads
+					// as pausing something that is playing, and the receiver stays
+					// connected either way.
+					if ui.Button(c, s.t("Disconnect")).Clicked() && s.deps.OnStop != nil {
 						s.deps.OnStop()
 					}
 				default:

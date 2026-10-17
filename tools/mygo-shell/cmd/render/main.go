@@ -114,6 +114,19 @@ func main() {
 				Life:      shell.New(),
 				Receivers: func() []discovery.Receiver { return receivers },
 				OnPlay:    func(r discovery.Receiver) {},
+				PlayingReceiver: func() *discovery.Receiver {
+					if playingID == "" {
+						return nil
+					}
+					for _, r := range receivers {
+						if r.ID == playingID {
+							found := r
+							return &found
+						}
+					}
+					return nil
+				},
+				OnStop:    func() {},
 				AdaptedMs: func() int { return 500 },
 			})
 			for _, page := range []string{"stats", "receivers", "equalizer", "settings"} {

@@ -60,8 +60,8 @@ func TestOnlyThePlayingReceiverOffersStop(t *testing.T) {
 	panel := NewPanel(panelDeps(streamingState(), []discovery.Receiver{living, studio}, living.ID))
 	tester := ui.NewTester(panel.View, panelWidth, 600)
 
-	if !tester.HasText("Stop") {
-		t.Fatal("the playing receiver offers no Stop")
+	if !tester.HasText("Disconnect") {
+		t.Fatal("the playing receiver offers no Disconnect")
 	}
 	if !tester.HasText("Play") {
 		t.Error("the other receiver offers no Play: it is idle, so it can be started")
@@ -69,7 +69,7 @@ func TestOnlyThePlayingReceiverOffersStop(t *testing.T) {
 	// One Stop, one Play: the row that is playing is the only one that stops.
 	stops := 0
 	for _, s := range tester.Texts() {
-		if s == "Stop" {
+		if s == "Disconnect" {
 			stops++
 		}
 	}
@@ -96,7 +96,7 @@ func TestIdleReceiversAllOfferPlay(t *testing.T) {
 	if plays != len(recs) {
 		t.Errorf("%d Play controls, want %d: every idle receiver can be played to", plays, len(recs))
 	}
-	if tester.HasText("Stop") {
+	if tester.HasText("Disconnect") {
 		t.Error("an idle panel offers Stop, but nothing is playing")
 	}
 }
@@ -199,8 +199,8 @@ func TestAPlayingReceiverIsNotCalledOffline(t *testing.T) {
 	rec.Online = false
 	panel := NewPanel(panelDeps(streamingState(), []discovery.Receiver{rec}, rec.ID))
 
-	if !ui.NewTester(panel.View, panelWidth, 600).HasText("Stop") {
-		t.Error("the playing receiver lost its Stop")
+	if !ui.NewTester(panel.View, panelWidth, 600).HasText("Disconnect") {
+		t.Error("the playing receiver lost its Disconnect")
 	}
 }
 
@@ -227,14 +227,14 @@ func TestTheStatsPageHasNoPlaybackAction(t *testing.T) {
 	})
 	view.SetPage("stats")
 	tester := ui.NewTester(view.View, 880, 640)
-	if tester.HasText("Stop") {
+	if tester.HasText("Disconnect") {
 		t.Error("Stats offers Stop: stopping is a decision about one receiver, which this page does not name")
 	}
 	// "Playing" is the phase label the engine reports and contains "Play" as a
 	// prefix, so a substring search would match it. A button is a label of exactly
 	// "Play", which is what is looked for here.
 	for _, text := range tester.Texts() {
-		if text == "Play" || text == "Stop" {
+		if text == "Play" || text == "Stop" || text == "Disconnect" {
 			t.Errorf("Stats shows a %q action: which receiver it acts on is not stated on the page", text)
 		}
 	}
@@ -610,8 +610,8 @@ func TestPairIsNotOfferedNextToAStreamingRow(t *testing.T) {
 	tester := ui.NewTester(view.View, 880, 1100)
 
 	// Living Room is playing, so its row shows Stop.
-	if !tester.HasText("Stop") {
-		t.Error("the playing row offers no Stop")
+	if !tester.HasText("Disconnect") {
+		t.Error("the playing row offers no Disconnect")
 	}
 	// Studio is not playing, and its row must not offer Pair: pairing takes over
 	// the running session and cancels it, so a Pair on any row while something is
@@ -665,5 +665,61 @@ func TestEveryInterfaceStringHasAChineseEntryForTheSettingsPage(t *testing.T) {
 		if tru := i18n.For(i18n.Chinese); tru.T(key) == key {
 			t.Errorf("%q has no Chinese entry, so it would show English", key)
 		}
+	}
+}
+
+func TestAReceiverBeingConnectedKeepsItsDisconnect(t *testing.T) {
+	// The receiver is connected from the moment it is asked to play, not from
+	// the moment audio flows. Gating the row on PhaseStreaming made it lose its
+	// Disconnect while the connection was still being made, and that is exactly
+	// when a second Play would cancel the one under way - which is what made two
+	// Plays on one device end in a failure.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+
+	// A connection in progress: the engine is still working through its protocol
+	// steps, so the phase is connecting, not streaming.
+	connecting := engine.NewState()
+	connecting.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"setup_audio"}`)})
+
+	panel := NewPanel(Deps{
+		Words:     i18n.For(i18n.English),
+		State:     connecting,
+		Settings:  settings.Open("/tmp/airflash-connecting-row.json"),
+		Life:      shell.New(),
+		Receivers: func() []discovery.Receiver { return []discovery.Receiver{living} },
+		PlayingReceiver: func() *discovery.Receiver {
+			found := living
+			return &found
+		},
+	})
+	tester := ui.NewTester(panel.View, panelWidth, 600)
+
+	if !tester.HasText("Disconnect") {
+		t.Error("a receiver being connected offers no Disconnect: a second Play would cancel it")
+	}
+	for _, text := range tester.Texts() {
+		if text == "Play" {
+			t.Error("a receiver being connected offers Play, which would start a second session")
+		}
+	}
+}
+
+func TestASecondPlayOnTheReceiverAlreadyPlayingIsNotStarted(t *testing.T) {
+	// The engine's start takes over whatever session is running and drops it, so
+	// a second Play on the same device cancels the stream that was working. The
+	// row shows Disconnect for it, and that is what this guards.
+	living := receiver("AA", "Living Room", "10.0.10.31")
+	plays := 0
+	panel := NewPanel(panelDeps(streamingState(), []discovery.Receiver{living}, living.ID))
+	panel.deps.OnPlay = func(discovery.Receiver) { plays++ }
+
+	tester := ui.NewTester(panel.View, panelWidth, 600)
+	// The row offers Disconnect, so there is no Play to press twice: the guard is
+	// that the control is not offered at all.
+	if r, ok := tester.Find("Play"); ok {
+		tester.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	}
+	if plays != 0 {
+		t.Errorf("play fired %d times for a receiver already playing", plays)
 	}
 }
