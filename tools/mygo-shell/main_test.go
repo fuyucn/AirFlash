@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 )
@@ -84,5 +85,79 @@ func TestAnAuthFailureIsNotRetriedForever(t *testing.T) {
 	}
 	if isAuthFailure("the engine stopped") {
 		t.Error("an engine ending was mistaken for an authentication failure")
+	}
+}
+
+// The merge of what the browse found with what the user typed in. It is where a
+// device that answers mDNS and the same device typed in by hand become one row
+// rather than two.
+
+// manualList stands in for a manual entry list.
+func manualList(host string, port int) []settings.ManualReceiver {
+	return []settings.ManualReceiver{{Id: host, Host: host, Port: port}}
+}
+
+func TestAManualEntryForADeviceAlreadyFoundIsNotShownTwice(t *testing.T) {
+	// The browse and the user are describing one speaker. Two rows for it leaves
+	// the user unable to tell which is which.
+	manual := manualList("10.0.10.31", 7000)
+	if !isManualEndpoint(manual, "10.0.10.31", 7000) {
+		t.Error("the manual entry was not matched, so the device would appear twice")
+	}
+}
+
+func TestAManualEntryForAnotherDeviceIsNotMatched(t *testing.T) {
+	manual := manualList("10.0.10.31", 7000)
+	if isManualEndpoint(manual, "10.0.10.32", 7000) {
+		t.Error("a different address was matched")
+	}
+	if isManualEndpoint(manual, "10.0.10.31", 7001) {
+		t.Error("a different port was matched: the same address on another port is another speaker")
+	}
+}
+
+func TestAManualReceiverIsShownAsPresent(t *testing.T) {
+	// Nothing is checking it - the browse that would report it gone cannot reach
+	// it, which is why it was typed in. Marking it offline would offer a Play
+	// that the user is told is unavailable for a device they know is there.
+	rec := manualAsReceiver(settings.Default(), settings.ManualReceiver{
+		Id: "10.0.10.31", Host: "10.0.10.31", Port: 7000,
+	})
+	if !rec.Online {
+		t.Error("a manual receiver was reported offline")
+	}
+	if rec.Port != 7000 {
+		t.Errorf("port = %d, want 7000", rec.Port)
+	}
+	if rec.Name != "10.0.10.31" {
+		t.Errorf("name = %q, want the address when none was given", rec.Name)
+	}
+}
+
+func TestAManualReceiversNameIsUsedWhenItGaveOne(t *testing.T) {
+	rec := manualAsReceiver(settings.Default(), settings.ManualReceiver{
+		Id: "10.0.10.31", Host: "10.0.10.31", Port: 7000, Name: "Study",
+	})
+	if rec.Name != "Study" {
+		t.Errorf("name = %q, want Study", rec.Name)
+	}
+}
+
+func TestAnAliasReplacesTheNameASurfaceShows(t *testing.T) {
+	// The alias is what the panel shows instead of the device's own name, which
+	// is set in the Home app and cannot be changed from here.
+	cfg := settings.Default()
+	cfg.SetAlias("42FB06B510BD", "Study")
+	rec := discovery.Receiver{ID: "42FB06B510BD", Name: "Living Room"}
+	if got := named(cfg, rec); got.Name != "Study" {
+		t.Errorf("name = %q, want the alias", got.Name)
+	}
+}
+
+func TestAReceiverWithNoAliasKeepsItsOwnName(t *testing.T) {
+	cfg := settings.Default()
+	rec := discovery.Receiver{ID: "42FB06B510BD", Name: "Living Room"}
+	if got := named(cfg, rec); got.Name != "Living Room" {
+		t.Errorf("name = %q, want the device's own", got.Name)
 	}
 }

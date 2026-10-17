@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -81,6 +82,14 @@ type Deps struct {
 	// OnOpenWindow opens the main window on a named page, which is how the
 	// panel reaches the full picture and the settings.
 	OnOpenWindow func(string)
+	// OnManualReceiver adds or removes a receiver the browse cannot find, which
+	// is the only way to reach a device on another subnet. Adding reports back
+	// through onProblem, because the app is the one that holds the rules: an
+	// address that is not one, or one already in the list, is refused there and
+	// the reason shown here.
+	OnManualReceiver func(add bool, index int, receiver settings.ManualReceiver, onProblem func(string))
+	// OnAlias names a receiver, or renames it. An empty name removes the name.
+	OnAlias func(receiverID, name string)
 }
 
 // page identifies the content shown beside the sidebar.
@@ -93,6 +102,19 @@ const (
 	pageSettings
 )
 
+// manualReceiver is the "add one by hand" form: the receiver being typed in,
+// and whether the form is open.
+type manualReceiver struct {
+	// open says the form is showing. It opens on the button and closes on a
+	// cancel or a completed add.
+	open bool
+	name string
+	host string
+	port string
+	// problem is what the last attempt was refused for, shown under the form.
+	problem string
+}
+
 // Shell is the app's view state that lives between frames.
 type Shell struct {
 	deps Deps
@@ -101,6 +123,10 @@ type Shell struct {
 	// It is the window's, not the app's: it is a view state that lasts as long as
 	// the window does, like the page.
 	tuning string
+	// adding is the receiver being typed in by hand, for a device the browse
+	// cannot find. It is the window's for the same reason tuning is: a rebuild
+	// should not throw away what was being typed.
+	adding manualReceiver
 	// entered is when the window opened, for the entrance animation.
 	entered time.Time
 }
@@ -927,6 +953,8 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings) {
 				s.receiverOptions(c, p, cfg, rec)
 			}
 		}
+
+		s.manualReceivers(c, p, cfg)
 	})
 }
 
@@ -959,23 +987,38 @@ func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings,
 		}
 	}
 
-	ui.Row(c).FillWidth().Padding(22, 4, 4, 4).Gap(14).Children(func() {
-		sectionLabel(s.deps.Words, c, p, "LATENCY")
-		seg := ui.Segmented(c, &index, labels...)
-		if seg.Changed() && s.deps.OnReceiverOption != nil {
-			if index == 0 {
-				// Back to the global setting, which is "unset" rather than a
-				// value, so the field is cleared rather than written.
-				s.deps.OnReceiverOption(rec.ID, "latency_ms", nil)
-				return
+	ui.Column(c).FillWidth().Gap(10).Padding(22, 4, 4, 4).Children(func() {
+		ui.Row(c).FillWidth().Gap(14).Children(func() {
+			sectionLabel(s.deps.Words, c, p, "LATENCY")
+			seg := ui.Segmented(c, &index, labels...)
+			if seg.Changed() && s.deps.OnReceiverOption != nil {
+				if index == 0 {
+					// Back to the global setting, which is "unset" rather than a
+					// value, so the field is cleared rather than written.
+					s.deps.OnReceiverOption(rec.ID, "latency_ms", nil)
+					return
+				}
+				if index-1 < len(choices) {
+					s.deps.OnReceiverOption(rec.ID, "latency_ms",
+						settings.NamedLatencyMs(choices[index-1]))
+				}
 			}
-			if index-1 < len(choices) {
-				s.deps.OnReceiverOption(rec.ID, "latency_ms",
-					settings.NamedLatencyMs(choices[index-1]))
+			ui.Text(c, fmt.Sprintf("%d ms%s", effective, ownSuffix(s.t, own))).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+		})
+
+		// What the user calls it. The name the device reports is whatever was
+		// typed into the Home app, which cannot be changed from here; an alias
+		// can, and it is what the panel shows instead.
+		ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
+			sectionLabel(s.deps.Words, c, p, "NAME")
+			alias := cfg.AliasFor(rec.ID)
+			if ui.TextInput(c, &alias).Grow(1).Placeholder(rec.Name).Changed() {
+				if s.deps.OnAlias != nil {
+					s.deps.OnAlias(rec.ID, strings.TrimSpace(alias))
+				}
 			}
-		}
-		ui.Text(c, fmt.Sprintf("%d ms%s", effective, ownSuffix(s.t, own))).
-			FontSize(sizeSmall).TextColor(p.InkMuted)
+		})
 	})
 }
 
@@ -986,6 +1029,107 @@ func ownSuffix(words func(string) string, own bool) string {
 		return " · " + words("its own")
 	}
 	return " · " + words("global")
+}
+
+// manualReceivers lists what the user typed in, and the way to type in another.
+//
+// The browse finds a device by its mDNS answer, and a speaker on another subnet
+// - or behind a router that does not forward multicast - is present but
+// invisible. Without this there is no way to reach it at all, which is why the
+// desktop host has the same thing.
+func (s *Shell) manualReceivers(c *ui.Context, p palette, cfg settings.Settings) {
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
+		for i, r := range cfg.ManualReceivers {
+			index := i
+			one := r
+			row := ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, receiverName(one.Name, one.Host)).FontSize(sizeBody).TextColor(p.Ink)
+				ui.Text(c, fmt.Sprintf("%s:%d", one.Host, one.Port)).FontSize(sizeSmall).
+					TextColor(p.InkMuted)
+				ui.Spacer(c).Grow(1)
+				if ui.Button(c, s.t("Remove")).Clicked() && s.deps.OnManualReceiver != nil {
+					s.deps.OnManualReceiver(false, index, settings.ManualReceiver{}, nil)
+				}
+			})
+			row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		}
+
+		if s.adding.open {
+			s.addManualForm(c, p)
+			return
+		}
+		// Not stretched: a wide button here reads as a heading over the rows
+		// above it rather than as one more thing to press.
+		// Not stretched to the column's width: a wide button here reads as a
+		// heading over the rows above it rather than as one more thing to press.
+		add := ui.Button(c, s.t("Add one by hand")).Width(160)
+		if add.Clicked() {
+			s.adding = manualReceiver{open: true, port: "7000"}
+		}
+		ui.Text(c, s.t("For a receiver the network search cannot see: a speaker on "+
+			"another subnet, or one whose announcements the router does not forward.")).
+			FontSize(sizeSmall).TextColor(p.InkMuted)
+	}).Padding(0, 20, 0, 0).
+		BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+}
+
+// addManualForm is the fields one manual receiver needs.
+//
+// The address is the only one that is not optional: a receiver with no address
+// cannot be reached, and a name with no address is a row that plays nothing.
+func (s *Shell) addManualForm(c *ui.Context, p palette) {
+	name, host, port := s.adding.name, s.adding.host, s.adding.port
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.End).Children(func() {
+			s.field(c, p, &host, s.t("IP address"), 1)
+			s.field(c, p, &port, s.t("Port"), 0)
+		})
+		s.field(c, p, &name, s.t("Name"), 1)
+
+		if s.adding.problem != "" {
+			ui.Text(c, s.adding.problem).FontSize(sizeSmall).TextColor(p.Danger)
+		}
+
+		ui.Row(c).Gap(10).Children(func() {
+			if ui.Button(c, s.t("Add")).Clicked() && s.deps.OnManualReceiver != nil {
+				// The form is handed to the app whole, and the app refuses it or
+				// keeps it. What the refusal was is reported back and shown here,
+				// so the rules the settings enforce are the ones the user is told
+				// about rather than a second copy of them.
+				// A port that was not typed defaults on the app's side rather than
+				// here, so there is one place that knows the AirPlay port.
+				portNumber := 0
+				if p, err := strconv.Atoi(strings.TrimSpace(port)); err == nil {
+					portNumber = p
+				}
+				s.deps.OnManualReceiver(true, -1, settings.ManualReceiver{
+					Name: strings.TrimSpace(name),
+					Host: strings.TrimSpace(host),
+					Port: portNumber,
+				}, func(problem string) { s.adding.problem = problem })
+			}
+			if ui.Button(c, s.t("Cancel")).Clicked() {
+				s.adding = manualReceiver{}
+			}
+		})
+	})
+}
+
+// field is one labelled input, grown to the weight given.
+func (s *Shell) field(c *ui.Context, p palette, value *string, label string, grow float32) {
+	ui.Column(c).Grow(grow).Shrink(1).Gap(6).Children(func() {
+		ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
+		ui.TextInput(c, value).FillWidth()
+	})
+}
+
+// receiverName is a manual receiver's name, or its address when none was given.
+// A row with no name is still a row the user has to recognise.
+func receiverName(name, host string) string {
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	return host
 }
 
 // settingsPage holds the mode switch, which is the one setting that changes

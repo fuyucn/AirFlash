@@ -3,7 +3,10 @@ package settings
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"strings"
 
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
@@ -75,6 +78,17 @@ type Settings struct {
 	// delayed behind the other.
 	MuteWhileStreaming bool `json:"mute_while_streaming"`
 
+	// ManualReceivers are receivers the user typed in, which the browse cannot
+	// find: a device on another subnet, or one whose mDNS the router does not
+	// forward. The desktop host has the same escape hatch, because a speaker
+	// that is present but invisible is otherwise unreachable.
+	ManualReceivers []ManualReceiver `json:"manual_receivers"`
+
+	// ReceiverAliases are the names a user gives a receiver, keyed by the
+	// identity it is known by. Identity moves when a device is re-paired or
+	// replugged, and an alias is what keeps a row from appearing to be new.
+	ReceiverAliases map[string]string `json:"receiver_aliases"`
+
 	// CaptureEndpoint is the id of the audio endpoint to capture, or "" for the
 	// system's default render device. The desktop host names that default
 	// "loopback": it captures everything the PC plays rather than one program's
@@ -116,6 +130,19 @@ type Session struct {
 	SkippedPackets uint64    `json:"skipped_packets"`
 	ExpiredResends uint64    `json:"expired_resends"`
 	At             time.Time `json:"at"`
+}
+
+// ManualReceiver is a receiver the user typed in.
+//
+// Id is the identity it is matched by as well as what its settings are keyed by,
+// which is why it is the same value normalisation produces: an entry that typed
+// a MAC with colons and a record that reports one without must be the same
+// receiver.
+type ManualReceiver struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port int    `json:"port"`
 }
 
 // ReceiverOptions is one receiver's own settings.
@@ -255,6 +282,16 @@ func (s Settings) normalized() Settings {
 	if len(s.Sessions) > maxSessions {
 		s.Sessions = s.Sessions[len(s.Sessions)-maxSessions:]
 	}
+	// A manual receiver that is not usable is dropped rather than kept: it came
+	// from a settings file, and one with no address produces a row in the panel
+	// that cannot be played to.
+	kept := s.ManualReceivers[:0]
+	for _, r := range s.ManualReceivers {
+		if r.Id != "" && r.Port > 0 && r.Port <= 65535 {
+			kept = append(kept, r)
+		}
+	}
+	s.ManualReceivers = kept
 	return s
 }
 
@@ -311,6 +348,134 @@ func (s Settings) AutoConnectFor(id string) bool {
 		return *o.AutoConnect
 	}
 	return s.AutoConnect
+}
+
+// ManualReceiverAt returns the manual receiver at an index, or nil.
+func (s Settings) ManualReceiverAt(i int) *ManualReceiver {
+	if i < 0 || i >= len(s.ManualReceivers) {
+		return nil
+	}
+	return &s.ManualReceivers[i]
+}
+
+// AliasFor is the name a user gave a receiver, or "".
+//
+// The key is matched after normalisation, because the identity a browse reports
+// and the one a user saw in a log are not written the same way: "aa:bb:..." and
+// "aabb..." are the same device.
+func (s Settings) AliasFor(id string) string {
+	if s.ReceiverAliases == nil {
+		return ""
+	}
+	if name := s.ReceiverAliases[id]; name != "" {
+		return name
+	}
+	for key, name := range s.ReceiverAliases {
+		if devicesMatch(key, id) {
+			return name
+		}
+	}
+	return ""
+}
+
+// SetAlias stores a name for a receiver, or removes it where the name is empty.
+func (s *Settings) SetAlias(id, name string) {
+	if s.ReceiverAliases == nil {
+		s.ReceiverAliases = map[string]string{}
+	}
+	if name == "" {
+		delete(s.ReceiverAliases, id)
+		return
+	}
+	// An alias replaces whatever was there rather than accumulating: one name
+	// for one receiver is the whole point of the field.
+	for key := range s.ReceiverAliases {
+		if devicesMatch(key, id) {
+			delete(s.ReceiverAliases, key)
+		}
+	}
+	s.ReceiverAliases[id] = name
+}
+
+// NormalizeDevice reduces an identity to the form that says whether two of them
+// are the same device.
+//
+// A twelve-character string is a MAC address, which is what a HomePod's device
+// id is, and MACs are written with either colons, dashes or neither depending on
+// who wrote them. Two that differ only in their separators are one device and
+// must match as one, or a receiver appears to be new every time its identity is
+// read from somewhere else. Everything else is left alone: an endpoint identity
+// such as "10.0.10.31:7000" is only equal to itself.
+func NormalizeDevice(id string) string {
+	text := strings.TrimSpace(id)
+	stripped := strings.NewReplacer(":", "", "-", "", " ", "").Replace(text)
+	if len(stripped) == 12 && isHexString(stripped) {
+		return strings.ToLower(stripped)
+	}
+	return text
+}
+
+func isHexString(text string) bool {
+	for _, c := range text {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return len(text) > 0
+}
+
+// devicesMatch reports whether two identities are the same device.
+func devicesMatch(a, b string) bool {
+	na, nb := NormalizeDevice(a), NormalizeDevice(b)
+	if na == "" || nb == "" {
+		return false
+	}
+	return na == nb
+}
+
+// AddManualReceiver appends a manual receiver, returning an error when it is not
+// usable.
+//
+// A duplicate is refused rather than replaced: two entries for one address are
+// two rows in the panel for one device, and the user cannot tell which is which.
+func (s *Settings) AddManualReceiver(r ManualReceiver) error {
+	if r.Name == "" && r.Host == "" {
+		return errors.New("a manual receiver needs an address")
+	}
+	if r.Id == "" {
+		r.Id = NormalizeDevice(r.Host)
+	}
+	if r.Id == "" {
+		return errors.New("a manual receiver needs an address")
+	}
+	// A port that was not given defaults to the one AirPlay 2 uses, which is what
+	// the desktop host's own manual-receiver dialog does: nobody types it. It is
+	// written out rather than taken from the discovery package, which would be a
+	// dependency from settings on a network it has no other use for.
+	if r.Port == 0 {
+		r.Port = 7000
+	}
+	if r.Port < 1 || r.Port > 65535 {
+		return errors.New("a manual receiver's port must be between 1 and 65535")
+	}
+	if net.ParseIP(r.Host) == nil {
+		return errors.New("a manual receiver's address is not an IP address")
+	}
+	for _, have := range s.ManualReceivers {
+		if have.Host == r.Host && have.Port == r.Port {
+			return fmt.Errorf("%s:%d is already in the list", r.Host, have.Port)
+		}
+	}
+	s.ManualReceivers = append(s.ManualReceivers, r)
+	return nil
+}
+
+// DropManualReceiver removes a manual receiver by its index.
+func (s *Settings) DropManualReceiver(i int) {
+	if i < 0 || i >= len(s.ManualReceivers) {
+		return
+	}
+	s.ManualReceivers = append(s.ManualReceivers[:i], s.ManualReceivers[i+1:]...)
 }
 
 // hasOwn reports whether a receiver has any setting of its own.

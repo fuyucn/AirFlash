@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -294,6 +295,37 @@ func (a *App) openWindow(page string) {
 				}
 				s.SetOptions(id, o)
 			})
+		},
+		OnManualReceiver: func(add bool, index int, rec settings.ManualReceiver, onProblem func(string)) {
+			if !add {
+				a.settings.Update(func(s *settings.Settings) { s.DropManualReceiver(index) })
+				a.repaint()
+				return
+			}
+			// The id is derived from the address, which is what makes an entry
+			// and a browse record of the same device the same receiver as far as
+			// settings are concerned.
+			rec.Id = discovery.Normalize(rec.Host)
+			problem := ""
+			a.settings.Update(func(s *settings.Settings) {
+				if err := s.AddManualReceiver(rec); err != nil {
+					problem = err.Error()
+					return
+				}
+			})
+			if problem == "" {
+				a.repaint()
+				return
+			}
+			// The form stays open on the fields that were typed, so a refusal is
+			// not the whole thing being lost.
+			if onProblem != nil {
+				onProblem(problem)
+			}
+		},
+		OnAlias: func(id, name string) {
+			a.settings.Update(func(s *settings.Settings) { s.SetAlias(id, name) })
+			a.repaint()
 		},
 		// The equalizer's four changes all reach the engine the same way: a live
 		// stream takes it at once, and one that has not started inherits it from
@@ -628,9 +660,65 @@ func (a *App) Receivers() []discovery.Receiver {
 		if cfg.HiddenFor(r.ID) {
 			continue
 		}
-		out = append(out, r)
+		// A manual entry for the same device is not another receiver: the browse
+		// and the user are describing one speaker, and showing both would be two
+		// rows for it.
+		if isManualEndpoint(cfg.ManualReceivers, r.Address, r.Port) {
+			continue
+		}
+		out = append(out, named(cfg, r))
+	}
+	// The ones the browse did not find, which is the whole point of having them:
+	// a receiver on another subnet answers mDNS nowhere the local machine can
+	// hear.
+	for _, m := range cfg.ManualReceivers {
+		if cfg.HiddenFor(m.Id) {
+			continue
+		}
+		out = append(out, manualAsReceiver(cfg, m))
 	}
 	return out
+}
+
+// manualAsReceiver is a manual entry as the browse would have reported it. It
+// reads as present rather than absent because nothing is checking: the browse
+// that would say otherwise cannot reach it, which is why it was typed in.
+func manualAsReceiver(cfg settings.Settings, m settings.ManualReceiver) discovery.Receiver {
+	return discovery.Receiver{
+		ID:      m.Id,
+		Name:    nameOrHost(m.Name, m.Host),
+		Address: m.Host,
+		Port:    m.Port,
+		Online:  true,
+	}
+}
+
+// isManualEndpoint reports whether a manual entry describes this endpoint.
+func isManualEndpoint(manual []settings.ManualReceiver, host string, port int) bool {
+	for _, m := range manual {
+		if strings.EqualFold(m.Host, host) && m.Port == port {
+			return true
+		}
+	}
+	return false
+}
+
+// nameOrHost is a manual receiver's name, or its address when none was given.
+// A row with no name is still a row the user has to recognise.
+func nameOrHost(name, host string) string {
+	if strings.TrimSpace(name) != "" {
+		return name
+	}
+	return host
+}
+
+// named applies one receiver's alias, which is what the surfaces show instead of
+// the name the device itself reports.
+func named(cfg settings.Settings, r discovery.Receiver) discovery.Receiver {
+	if alias := cfg.AliasFor(r.ID); alias != "" {
+		r.Name = alias
+	}
+	return r
 }
 
 // playReceiver starts playback on what discovery found. A stereo pair sends
@@ -641,7 +729,7 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	}
 	var peers []engine.Peer
 	for _, m := range r.Peers() {
-		peers = append(peers, engine.Peer{Host: m.Address, Port: m.Port})
+		peers = append(peers, engine.Peer{Host: m.Host, Port: m.Port})
 	}
 	if len(peers) == 0 {
 		return

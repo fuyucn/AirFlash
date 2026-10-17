@@ -243,3 +243,152 @@ func TestHiddenKeepsAReceiverWithoutForgettingIt(t *testing.T) {
 		t.Error("an unset receiver defaults to hidden")
 	}
 }
+
+func TestAnIdentityWithSeparatorsMatchesOneWithout(t *testing.T) {
+	// A HomePod's device id is a MAC, and MACs are written with colons, dashes
+	// or nothing depending on who wrote them down. Treating "AA:BB:..." and
+	// "aabb..." as different devices would leave a receiver with two rows in the
+	// panel and two sets of settings.
+	if !devicesMatch("42FB:06B5:10BD", "42FB06B510BD") {
+		t.Error("a MAC written two ways did not match itself")
+	}
+	if devicesMatch("42FB06B510BD", "42FB06B510BE") {
+		t.Error("two different MACs matched")
+	}
+}
+
+func TestAnEndpointIsOnlyEqualToItself(t *testing.T) {
+	// An endpoint identity is made of its address and port, which a MAC-style
+	// normalisation would collapse into another device: "10.0.10.31:7000" must
+	// not be reduced to a MAC-shaped fragment that matches something else.
+	if devicesMatch("10.0.10.31:7000", "10.0.10.32:7000") {
+		t.Error("two different endpoints matched")
+	}
+	if !devicesMatch("10.0.10.31:7000", "10.0.10.31:7000") {
+		t.Error("an endpoint did not match itself")
+	}
+}
+
+func TestAnAliasIsFoundWhateverWayTheKeyWasWritten(t *testing.T) {
+	s := Default()
+	s.SetAlias("42FB:06B5:10BD", "Living Room")
+
+	if got := s.AliasFor("42FB06B510BD"); got != "Living Room" {
+		t.Errorf("alias for the same MAC written another way = %q, want Living Room", got)
+	}
+}
+
+func TestAnAliasReplacesThePreviousOne(t *testing.T) {
+	// One name for one receiver is the whole point: a second name must not leave
+	// two entries that a reader has to choose between.
+	s := Default()
+	s.SetAlias("42FB06B510BD", "Living Room")
+	s.SetAlias("42FB:06B5:10BD", "Study")
+
+	if got := s.AliasFor("42FB06B510BD"); got != "Study" {
+		t.Errorf("alias = %q, want Study", got)
+	}
+	if len(s.ReceiverAliases) != 1 {
+		t.Errorf("%d aliases stored, want 1", len(s.ReceiverAliases))
+	}
+}
+
+func TestAnEmptyAliasRemovesTheName(t *testing.T) {
+	s := Default()
+	s.SetAlias("42FB06B510BD", "Living Room")
+	s.SetAlias("42FB06B510BD", "")
+
+	if got := s.AliasFor("42FB06B510BD"); got != "" {
+		t.Errorf("alias = %q, want it removed", got)
+	}
+}
+
+func TestAManualReceiverNeedsAUsableAddress(t *testing.T) {
+	cases := []struct {
+		name string
+		in   ManualReceiver
+	}{
+		{"no address", ManualReceiver{Name: "Study", Port: 7000}},
+		{"a hostname rather than an address", ManualReceiver{Host: "homepod.local", Port: 7000}},
+		{"a port above the range", ManualReceiver{Host: "10.0.10.31", Port: 70000}},
+	}
+	for _, c := range cases {
+		s := Default()
+		if err := s.AddManualReceiver(c.in); err == nil {
+			t.Errorf("%s was accepted", c.name)
+		}
+	}
+}
+
+func TestAManualReceiverIsAcceptedWithAUsableAddress(t *testing.T) {
+	s := Default()
+	if err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000}); err != nil {
+		t.Fatalf("a usable manual receiver was refused: %v", err)
+	}
+	if len(s.ManualReceivers) != 1 {
+		t.Fatalf("%d manual receivers, want 1", len(s.ManualReceivers))
+	}
+	// The id is derived, so the same device a browse reports and one a user typed
+	// in are the same receiver as far as settings are concerned.
+	if got := s.ManualReceiverAt(0).Id; got != "10.0.10.31" {
+		t.Errorf("id = %q, want the address", got)
+	}
+	// A port that was not given defaults to the one AirPlay 2 uses.
+	empty := Default()
+	if err := empty.AddManualReceiver(ManualReceiver{Host: "10.0.10.31"}); err != nil {
+		t.Fatalf("a receiver with no port was refused: %v", err)
+	}
+}
+
+func TestTheSameAddressIsNotListedTwice(t *testing.T) {
+	// Two entries for one address are two rows for one device, and the user
+	// cannot tell which is which.
+	s := Default()
+	if err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000}); err == nil {
+		t.Error("the same address was added twice")
+	}
+	// The same address on another port is another speaker and is allowed.
+	if err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7001}); err != nil {
+		t.Errorf("the same address on another port was refused: %v", err)
+	}
+}
+
+func TestADroppedManualReceiverLeavesTheOthers(t *testing.T) {
+	s := Default()
+	_ = s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000})
+	_ = s.AddManualReceiver(ManualReceiver{Host: "10.0.10.32", Port: 7000})
+
+	s.DropManualReceiver(0)
+	if len(s.ManualReceivers) != 1 {
+		t.Fatalf("%d receivers left, want 1", len(s.ManualReceivers))
+	}
+	if s.ManualReceivers[0].Host != "10.0.10.32" {
+		t.Errorf("the wrong receiver was dropped: %s", s.ManualReceivers[0].Host)
+	}
+	// An index that is not there does nothing rather than panicking.
+	s.DropManualReceiver(9)
+	if len(s.ManualReceivers) != 1 {
+		t.Errorf("%d receivers after a bad drop, want 1", len(s.ManualReceivers))
+	}
+}
+
+func TestAManualReceiverWithNoUsableAddressIsDroppedOnLoad(t *testing.T) {
+	// It came from a settings file, and one with no address is a row in the panel
+	// that cannot be played to.
+	s := Default()
+	s.ManualReceivers = []ManualReceiver{
+		{Id: "42FB06B510BD", Host: "10.0.10.31", Port: 7000},
+		{Id: "", Host: "10.0.10.32", Port: 7000},
+		{Id: "42FB06B510BE", Host: "10.0.10.33", Port: 0},
+	}
+	got := s.normalized()
+	if len(got.ManualReceivers) != 1 {
+		t.Fatalf("%d manual receivers survived, want 1", len(got.ManualReceivers))
+	}
+	if got.ManualReceivers[0].Host != "10.0.10.31" {
+		t.Errorf("kept %s, want the one usable receiver", got.ManualReceivers[0].Host)
+	}
+}
