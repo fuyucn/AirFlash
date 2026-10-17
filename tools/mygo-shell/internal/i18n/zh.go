@@ -84,6 +84,17 @@ var chinese = map[string]string{
 	" · Auto raised it from your floor of %d ms": " · 自动从你的下限 %d ms 上调",
 	"A new target applies to the next start.":    "新目标在下次开始播放时生效。",
 
+	// The adapter the receiver search runs on.
+	"Automatic": "自动",
+	"Adapter":   "网卡",
+	"NETWORK":   "网络",
+	"The adapter the receiver search runs on. A PC with a VPN up can find a HomePod on one adapter only.": "接收端搜索运行在哪块网卡上。挂了 VPN 的电脑只能在其中一块网卡上找到 HomePod。",
+	"A new adapter takes effect the next time the search runs.":                                           "新网卡在下次搜索时生效。",
+
+	// Silencing the local speakers while streaming.
+	"Mute the PC speakers while streaming": "播放时静音电脑扬声器",
+	"The sound is being sent to the HomePod, so playing it here too would be the same voice twice, one delayed behind the other.": "声音正在发送到 HomePod，本地再播一遍就是同一个声音两次，其中一次还会慢半拍。",
+
 	// The long descriptions on the settings page. Each is one whole sentence,
 	// which is what makes it one key: a sentence split across lines for the
 	// source is joined again by the Go compiler before it reaches the table.

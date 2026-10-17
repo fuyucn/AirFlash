@@ -1,0 +1,433 @@
+//go:build windows
+
+package localsound
+
+// Silencing the PC's own speakers, on Windows.
+//
+// This is the Core Audio path the desktop host takes: IMMDeviceEnumerator finds
+// the render endpoints, and each one's IAudioEndpointVolume carries the mute.
+// Both are COM objects that already exist on every Windows machine, so nothing
+// is registered here - the classes are only asked for.
+//
+// Each interface's vtable is declared as a struct of its own methods, in the
+// order the Windows SDK fixes them, because a slot taken by number is a number
+// that can be silently wrong. The structs carry IUnknown's three first, so a
+// pointer to one of them is the object itself.
+//
+// Nothing here can be exercised anywhere but a Windows machine: it is written
+// to be read, and the build's own cross-compilation is what checks it.
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+// The classes and interfaces, by the strings the SDK and the registry use.
+var (
+	clsidMMDeviceEnumerator = guidx("BCDE0395-E52F-467C-8E3D-C4579291692E")
+	iidIMMDeviceEnumerator  = guidx("A95664D2-9614-4F35-A746-DE8DB63617E6")
+	iidIAudioEndpointVolume = guidx("5CDF2C82-841E-4546-9722-0CF74078229A")
+	iidIMMDeviceCollection  = guidx("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E")
+	// PKEY_Device_FriendlyName: the device's own name, as Windows names it.
+	guidFormatID = guidx("A45C254E-DF1C-4EFD-8020-67D146A850E0")
+)
+
+// The first three methods every COM interface has. Named so the interfaces
+// below read as "IUnknown's, then mine".
+type unknownVtbl struct {
+	queryInterface uintptr
+	addRef         uintptr
+	release        uintptr
+}
+
+// deviceEnumeratorVtbl is IMMDeviceEnumerator.
+type deviceEnumeratorVtbl struct {
+	unknownVtbl
+	// enumAudioEndpoints lists the endpoints of one flow. Its second argument is
+	// a device-state mask, and DEVICE_STATE_ACTIVE is the only state worth
+	// listing: an unplugged speaker is not a choice.
+	enumAudioEndpoints      uintptr
+	getDefaultAudioEndpoint uintptr
+	getDevice               uintptr
+	registerNotification    uintptr
+	unregisterNotification  uintptr
+}
+
+// deviceCollectionVtbl is IMMDeviceCollection.
+type deviceCollectionVtbl struct {
+	unknownVtbl
+	getCount uintptr
+	item     uintptr
+}
+
+// deviceVtbl is IMMDevice.
+type deviceVtbl struct {
+	unknownVtbl
+	activate          uintptr
+	openPropertyStore uintptr
+	getID             uintptr
+	getState          uintptr
+}
+
+// propertyStoreVtbl is IPropertyStore.
+type propertyStoreVtbl struct {
+	unknownVtbl
+	getCount uintptr
+	getAt    uintptr
+	getValue uintptr
+}
+
+// volumeVtbl is IAudioEndpointVolume.
+type volumeVtbl struct {
+	unknownVtbl
+	registerControlChangeNotify   uintptr
+	unregisterControlChangeNotify uintptr
+	getChannelCount               uintptr
+	setMasterVolumeLevel          uintptr
+	setMasterVolumeLevelScalar    uintptr
+	getMasterVolumeLevel          uintptr
+	getMasterVolumeLevelScalar    uintptr
+	setChannelVolumeLevel         uintptr
+	setChannelVolumeLevelScalar   uintptr
+	getChannelVolumeLevel         uintptr
+	getChannelVolumeLevelScalar   uintptr
+	setMute                       uintptr
+	getMute                       uintptr
+	getVolumeRange                uintptr
+}
+
+// EDataFlow's render, and ERole's console, which together mean "the device the
+// console audio is played through" - what a user calls their speakers.
+const (
+	dataFlowRender = 1
+	roleConsole    = 0
+)
+
+// DEVICE_STATE_ACTIVE.
+const deviceStateActive = 0x00000001
+
+// CLSCTX_INPROC_SERVER, the only context the audio service runs in.
+const clsctxInprocServer = 1
+
+// hresult turns a Windows status code into an error when it is a failure.
+//
+// S_FALSE is not a failure, and COM objects sometimes answer with it when there
+// is nothing to do: it is read here rather than reported as one.
+func hresult(hr uintptr) error {
+	if hr == 0 || hr == 1 {
+		return nil
+	}
+	return fmt.Errorf("COM returned 0x%08x", uint32(hr))
+}
+
+// vt returns the vtable sitting at the head of a COM object, which is what the
+// structs above are declared to line up with.
+func vtptr(p unsafe.Pointer) unsafe.Pointer { return *(*unsafe.Pointer)(p) }
+
+// utf16String reads a null-terminated wide string, which is how Windows returns
+// device names.
+func utf16String(p *uint16) string {
+	return windows.UTF16PtrToString(p)
+}
+
+// release drops one reference to a COM object.
+func release(p unsafe.Pointer) {
+	if p == nil {
+		return
+	}
+	vt := (*unknownVtbl)(vtptr(p))
+	syscall.SyscallN(vt.release, uintptr(p))
+}
+
+// coInitializeEx is ole32's, and the rest of the COM entry points used.
+var (
+	ole32                = syscall.NewLazyDLL("ole32.dll")
+	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
+	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
+	procCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
+)
+
+const (
+	// COINIT_MULTITHREADED: nothing here needs a single-threaded apartment, and
+	// a Go runtime's threads are not the process's main one.
+	coinitMultithreaded = 0
+	// RPC_E_CHANGED_MODE: COM was already initialised on this thread with a
+	// different model. The objects used here work in either, so it is not a
+	// failure for this package.
+	rpcEChangedMode = 0x80010106
+)
+
+func coInitializeEx(reserved, coinit uintptr) error {
+	hr, _, _ := procCoInitializeEx.Call(reserved, coinit)
+	if hr == rpcEChangedMode {
+		return nil
+	}
+	return hresult(hr)
+}
+
+// createInstance makes one COM object.
+func createInstance(clsid, iid *guid) (unsafe.Pointer, error) {
+	var out unsafe.Pointer
+	hr, _, _ := procCoCreateInstance.Call(
+		uintptr(unsafe.Pointer(clsid)), 0, clsctxInprocServer,
+		uintptr(unsafe.Pointer(iid)), uintptr(unsafe.Pointer(&out)))
+	if err := hresult(hr); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, errors.New("COM object not created")
+	}
+	return out, nil
+}
+
+// queryInterface asks an object for one of its other interfaces.
+func queryInterface(p unsafe.Pointer, iid *guid) (unsafe.Pointer, error) {
+	vt := (*unknownVtbl)(vtptr(p))
+	var out unsafe.Pointer
+	hr, _, _ := syscall.SyscallN(vt.queryInterface, uintptr(p),
+		uintptr(unsafe.Pointer(iid)), uintptr(unsafe.Pointer(&out)))
+	if err := hresult(hr); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// propertyKey is the key a property is read by: a Guid and an integer, which is
+// how the SDK names them.
+type propertyKey struct {
+	FormatID guid
+	ID       uint32
+}
+
+// propVariant is the PROPVARIANT a property store returns.
+//
+// Only the wide-string case is used, and only for the friendly name. The
+// structure is a 16-bit type, three reserved words, then a union that starts at
+// offset 8 - so a string lands there rather than at the beginning.
+type propVariant struct {
+	vt        uint16
+	reserved1 uint16
+	reserved2 uint16
+	reserved3 uint16
+	pwszVal   uintptr
+}
+
+var (
+	comOnce sync.Once
+	comErr  error
+)
+
+// withCom runs one COM call, initialising COM first if nobody has.
+func withCom(fn func() error) error {
+	comOnce.Do(func() { comErr = coInitializeEx(0, coinitMultithreaded) })
+	if comErr != nil {
+		return comErr
+	}
+	return fn()
+}
+
+// enumerator builds the device enumerator.
+func enumerator() (unsafe.Pointer, error) {
+	return createInstance(&clsidMMDeviceEnumerator, &iidIMMDeviceEnumerator)
+}
+
+// endpoints lists the render endpoints.
+func endpoints() []Endpoint {
+	var out []Endpoint
+	_ = withCom(func() error {
+		enum, err := enumerator()
+		if err != nil {
+			return err
+		}
+		defer release(enum)
+		vt := (*deviceEnumeratorVtbl)(vtptr(enum))
+
+		var collection unsafe.Pointer
+		hr, _, _ := syscall.SyscallN(vt.enumAudioEndpoints, uintptr(enum),
+			dataFlowRender, deviceStateActive, uintptr(unsafe.Pointer(&collection)))
+		if err := hresult(hr); err != nil || collection == nil {
+			return err
+		}
+		defer release(collection)
+
+		count := 0
+		vtc := (*deviceCollectionVtbl)(vtptr(collection))
+		hr, _, _ = syscall.SyscallN(vtc.getCount, uintptr(collection),
+			uintptr(unsafe.Pointer(&count)))
+		if err := hresult(hr); err != nil {
+			return err
+		}
+
+		for i := 0; i < count; i++ {
+			var device unsafe.Pointer
+			hr, _, _ = syscall.SyscallN(vtc.item, uintptr(collection),
+				uintptr(i), uintptr(unsafe.Pointer(&device)))
+			if hresult(hr) != nil || device == nil {
+				continue
+			}
+			id, name := identify(device)
+			release(device)
+			if id == "" {
+				continue
+			}
+			// Render only, and the enum above was asked for that flow already:
+			// the field is what a caller filters on without having to know what
+			// the query above asked for.
+			out = append(out, Endpoint{ID: id, Name: name})
+		}
+		return nil
+	})
+	return out
+}
+
+// identify reads a device's id and its name.
+func identify(device unsafe.Pointer) (id, name string) {
+	vtd := (*deviceVtbl)(vtptr(device))
+
+	var wide *uint16
+	hr, _, _ := syscall.SyscallN(vtd.getID, uintptr(device), uintptr(unsafe.Pointer(&wide)))
+	if hresult(hr) == nil && wide != nil {
+		id = utf16String(wide)
+		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(wide)))
+	}
+	if id == "" {
+		return "", ""
+	}
+
+	var store unsafe.Pointer
+	hr, _, _ = syscall.SyscallN(vtd.openPropertyStore, uintptr(device),
+		deviceStateActive, uintptr(unsafe.Pointer(&store)))
+	if hresult(hr) != nil || store == nil {
+		return id, ""
+	}
+	defer release(store)
+
+	key := propertyKey{FormatID: guidFormatID, ID: 14}
+	var value propVariant
+	vts := (*propertyStoreVtbl)(vtptr(store))
+	hr, _, _ = syscall.SyscallN(vts.getValue, uintptr(store),
+		uintptr(unsafe.Pointer(&key)), uintptr(unsafe.Pointer(&value)))
+	if hresult(hr) != nil {
+		return id, ""
+	}
+	// VT_LPWSTR: the string itself is a pointer the caller owns.
+	if value.vt == 31 && value.pwszVal != 0 {
+		name = utf16String((*uint16)(unsafe.Pointer(value.pwszVal)))
+		procCoTaskMemFree.Call(value.pwszVal)
+	}
+	if name == "" {
+		// The id is what the endpoint is known by, so a name that could not be
+		// read still leaves a row the user can pick.
+		name = id
+	}
+	return id, name
+}
+
+// volumeOf is one endpoint's own volume control, by its id.
+func volumeOf(id string) (unsafe.Pointer, error) {
+	enum, err := enumerator()
+	if err != nil {
+		return nil, err
+	}
+	defer release(enum)
+	vte := (*deviceEnumeratorVtbl)(vtptr(enum))
+
+	wide, err := syscall.UTF16PtrFromString(id)
+	if err != nil {
+		return nil, err
+	}
+	var device unsafe.Pointer
+	hr, _, _ := syscall.SyscallN(vte.getDevice, uintptr(enum),
+		uintptr(unsafe.Pointer(wide)), uintptr(unsafe.Pointer(&device)))
+	// A device that has gone answers "not found", which is a "nothing to
+	// restore" rather than a failure worth reporting.
+	if hresult(hr) != nil || device == nil {
+		return nil, nil
+	}
+	defer release(device)
+
+	vol, err := queryInterface(device, &iidIAudioEndpointVolume)
+	if err != nil || vol == nil {
+		return nil, err
+	}
+	return vol, nil
+}
+
+// muteEndpoint silences one endpoint, remembering what it was.
+func muteEndpoint(id string) error {
+	return withCom(func() error {
+		vol, err := volumeOf(id)
+		if err != nil {
+			return err
+		}
+		if vol == nil {
+			return fmt.Errorf("the audio endpoint %s is no longer present", id)
+		}
+		defer release(vol)
+
+		before, ok := readMute(vol)
+		remember(id, remembered{wasMuted: before, read: ok})
+		return setMute(vol, true)
+	})
+}
+
+// restore returns every endpoint this silenced to what it was.
+func restore() error {
+	pending := takeForRestore()
+	return withCom(func() error {
+		var failures []string
+		for id, was := range pending {
+			if !was.read {
+				// Its state was never known, so restoring would be this app
+				// changing a setting the user made.
+				continue
+			}
+			vol, err := volumeOf(id)
+			if err != nil || vol == nil {
+				if err != nil {
+					failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+				}
+				continue
+			}
+			err = setMute(vol, was.wasMuted)
+			release(vol)
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+			}
+		}
+		if len(failures) > 0 {
+			return errors.New(strings.Join(failures, "; "))
+		}
+		return nil
+	})
+}
+
+// readMute reads an endpoint's mute, and reports whether it could be read.
+func readMute(vol unsafe.Pointer) (muted, ok bool) {
+	vt := (*volumeVtbl)(vtptr(vol))
+	var onto uint32
+	hr, _, _ := syscall.SyscallN(vt.getMute, uintptr(vol), uintptr(unsafe.Pointer(&onto)))
+	if hresult(hr) != nil {
+		return false, false
+	}
+	return onto != 0, true
+}
+
+func setMute(vol unsafe.Pointer, muted bool) error {
+	vt := (*volumeVtbl)(vtptr(vol))
+	var onto uint32
+	if muted {
+		onto = 1
+	}
+	// The second argument is an event context, which only matters to a
+	// notification the shell does not register for: it is left null.
+	hr, _, _ := syscall.SyscallN(vt.setMute, uintptr(vol),
+		uintptr(onto), uintptr(0))
+	return hresult(hr)
+}

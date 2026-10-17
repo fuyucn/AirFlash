@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/enginebin"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/localsound"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
@@ -175,7 +177,25 @@ func (a *App) run() {
 // asynchronously is discovery, and that only runs while a window is open. A
 // reading that never moves is worse than no reading at all.
 func (a *App) onEngineEvent(ev engine.Event) {
+	before := a.state.Snapshot().Phase
 	a.state.Apply(ev)
+	after := a.state.Snapshot().Phase
+
+	// The moment playback begins is when the PC's own speakers go quiet, if that
+	// is what the setting asks. Doing it on the transition rather than on every
+	// event matters: the engine reports four times a second, and the mute is one
+	// COM call that remembers the endpoint's state the first time only.
+	if before != engine.PhaseStreaming && after == engine.PhaseStreaming {
+		a.applyMute(a.settings.Current().MuteWhileStreaming)
+	}
+	if before != engine.PhaseStopped && after == engine.PhaseStopped {
+		// A stream that ended without the user pressing stop - the engine
+		// stopping, or a receiver dropping it - still has to give the speakers
+		// back.
+		if err := localsound.Restore(); err != nil {
+			log.Printf("restore the PC speakers: %v", err)
+		}
+	}
 
 	// The engine reports several times a second; the redraw rate is what the
 	// mode chose, so a burst of events costs one frame rather than one each.
@@ -307,6 +327,21 @@ func (a *App) openWindow(page string) {
 			// partial redraw would leave half the page in the old language.
 			a.life.Close()
 			a.openWindow(a.currentPage())
+		},
+		OnDiscoveryInterface: func(id string) {
+			a.settings.Update(func(s *settings.Settings) { s.DiscoveryInterfaceID = id })
+			// The browse runs on the adapter it was started with, so the only
+			// way to move it is to run it again. A window is open while this is
+			// being changed, so the new browse starts at once and the list
+			// refills.
+			a.stopDiscovery()
+			a.startDiscovery()
+		},
+		OnMuteWhileStreaming: func(on bool) {
+			a.settings.Update(func(s *settings.Settings) { s.MuteWhileStreaming = on })
+			// The setting is what a session applies when it starts, so it takes
+			// effect now rather than on the next one.
+			a.applyMute(on)
 		},
 		OnStartAtLogin: func(on bool) {
 			a.settings.Update(func(s *settings.Settings) { s.StartAtLogin = on })
@@ -486,6 +521,48 @@ func (a *App) panelView() *appui.Panel {
 	})
 }
 
+// applyMute silences or restores the PC's own speakers, as the setting asks.
+//
+// This is the desktop host's "mute while streaming". It is applied when a
+// session starts and when the setting changes during one, and undone when the
+// session ends: the engine being a separate process does not help here, because
+// the endpoint that has to be silenced is the shell's own machine's.
+//
+// The default render endpoint is the one that is silenced. A user with several
+// speakers who wants one left alone would need a per-endpoint choice, and the
+// desktop host has the same behaviour - it silences the endpoint audio is
+// playing through.
+func (a *App) applyMute(on bool) {
+	if !on {
+		if err := localsound.Restore(); err != nil {
+			log.Printf("restore the PC speakers: %v", err)
+		}
+		return
+	}
+	// With no endpoint named, the default render device is the one to silence,
+	// which is what an empty name means to the audio service. Nothing is
+	// enumerated here: a stream that is running has already decided, and
+	// re-reading the endpoints would be work that changes nothing.
+	if err := localsound.Mute(defaultRenderEndpoint()); err != nil {
+		log.Printf("mute the PC speakers: %v", err)
+	}
+}
+
+// defaultRenderEndpoint is the endpoint audio is playing through, or "" when
+// there is none to name.
+//
+// It is the endpoint the engine captures from, which is the render device by
+// definition: the engine's loopback capture reads what the console is sending to
+// the speakers, so that is the endpoint that has to go quiet.
+func defaultRenderEndpoint() string {
+	for _, e := range localsound.Endpoints() {
+		if !e.Capture {
+			return e.ID
+		}
+	}
+	return ""
+}
+
 // setDeviceVolume asks the engine to set a receiver's own volume.
 func (a *App) setDeviceVolume(rec discovery.Receiver, volume float64) {
 	c := a.client.Load()
@@ -506,7 +583,14 @@ func (a *App) startDiscovery() {
 	a.discoveryCancel.Store(&cancel)
 
 	go func() {
-		err := discovery.Browse(ctx, func(found []discovery.Receiver) {
+		// The interface to browse on, or none named, which is the system's own
+		// choice and right for a machine with one adapter.
+		onInterface := 0
+		if n, err := strconv.Atoi(a.settings.Current().DiscoveryInterfaceID); err == nil && n > 0 {
+			onInterface = n
+		}
+
+		err := discovery.Browse(ctx, onInterface, func(found []discovery.Receiver) {
 			a.receivers.Store(&found)
 
 			if w := a.win.Load(); w != nil {
@@ -662,6 +746,12 @@ func (a *App) stopStream() {
 	// be visible before the engine is asked to stop so that a loop waking up
 	// sees it.
 	a.stopping.Store(true)
+	// The stream is going away, so what was silenced for it is given back. A
+	// failure here leaves the speakers silent and is worth logging rather than
+	// swallowing: the user hears nothing and has no other way to know why.
+	if err := localsound.Restore(); err != nil {
+		log.Printf("restore the PC speakers: %v", err)
+	}
 	a.playing.Store(nil)
 	if c := a.client.Load(); c != nil {
 		_, _ = c.Stop()

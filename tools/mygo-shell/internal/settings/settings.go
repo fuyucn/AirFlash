@@ -64,6 +64,23 @@ type Settings struct {
 	// Language is which words the interface uses. System follows the machine.
 	Language string `json:"language"`
 
+	// DiscoveryInterfaceID is the system id of the adapter mDNS runs on, or ""
+	// for the system's own choice. A machine with a VPN up can find its
+	// receivers on only one of its adapters.
+	DiscoveryInterfaceID string `json:"discovery_interface_id"`
+
+	// MuteWhileStreaming silences the local speakers while a stream runs, which
+	// is what the desktop host does by default: the audio is being sent to the
+	// HomePod, so playing it locally as well is the same voice twice, one
+	// delayed behind the other.
+	MuteWhileStreaming bool `json:"mute_while_streaming"`
+
+	// CaptureEndpoint is the id of the audio endpoint to capture, or "" for the
+	// system's default render device. The desktop host names that default
+	// "loopback": it captures everything the PC plays rather than one program's
+	// output.
+	CaptureEndpoint string `json:"capture_endpoint"`
+
 	// Equalizer is the shell's own, off and flat by default.
 	Equalizer equalizer.Settings `json:"equalizer"`
 
@@ -129,6 +146,10 @@ func Default() Settings {
 		Adapt:             true,
 		LatencyAuto:       true,
 		ReconnectAttempts: 5,
+		// The desktop host silences the local speakers while streaming, and it is
+		// the right default: hearing the audio twice, one copy late, is worse
+		// than a second of confusion about where it went.
+		MuteWhileStreaming: true,
 	}
 }
 

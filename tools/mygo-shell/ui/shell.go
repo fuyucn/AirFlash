@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -67,10 +68,16 @@ type Deps struct {
 	OnReceiverOption func(receiverID, field string, value any)
 	// OnStartAtLogin turns the start-with-the-machine setting on or off.
 	OnStartAtLogin func(bool)
+	// OnDiscoveryInterface changes which adapter mDNS browses on, which is the
+	// one network setting that cannot be fixed by retrying: a machine with a
+	// VPN up finds its receivers on one adapter only.
+	OnDiscoveryInterface func(id string)
 	// OnReconnect turns the retry-a-dropped-session setting on or off.
 	OnReconnect func(bool)
 	// OnReconnectAttempts sets how many times to try.
 	OnReconnectAttempts func(int)
+	// OnMuteWhileStreaming silences the local speakers while a stream runs.
+	OnMuteWhileStreaming func(bool)
 	// OnOpenWindow opens the main window on a named page, which is how the
 	// panel reaches the full picture and the settings.
 	OnOpenWindow func(string)
@@ -1077,6 +1084,78 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 	})
 }
 
+// networkInterface is the adapter the browse runs on, as a combobox of what the
+// machine actually has.
+//
+// A machine with one adapter never needs this, which is why the default is "the
+// system's own choice" and why it is the first entry. A machine with a VPN up
+// can reach its receivers on one adapter only, and which one is not something
+// the user can be expected to know: the addresses are shown beside each name so
+// the right one is obvious rather than a guess among Ethernet 2, Ethernet 3 and
+// Wi-Fi.
+func (s *Shell) networkInterface(c *ui.Context, p palette, cfg settings.Settings) {
+	sectionLabel(s.deps.Words, c, p, "NETWORK")
+
+	adapters := discovery.Interfaces()
+	// What a value in the list means, as it is written in settings: "" is the
+	// system's choice and a number is the adapter's own index.
+	ids := []string{""}
+	labels := []string{s.t("Automatic")}
+	for _, a := range adapters {
+		ids = append(ids, strconv.Itoa(a.Index))
+		label := a.Name
+		if len(a.Addresses) > 0 {
+			label = fmt.Sprintf("%s · %s", a.Name, a.Addresses[0])
+		}
+		labels = append(labels, label)
+	}
+
+	chosen := cfg.DiscoveryInterfaceID
+	known := false
+	for _, id := range ids {
+		if id == chosen {
+			known = true
+			break
+		}
+	}
+	if !known {
+		// An adapter that has gone, which happens when the setting was made on
+		// another machine or the adapter was removed. Offering it as a choice
+		// would mean offering a browse that fails.
+		chosen = ""
+	}
+
+	ui.Column(c).FillWidth().Gap(8).Children(func() {
+		ui.Text(c, s.t("The adapter the receiver search runs on. A PC with a VPN up "+
+			"can find a HomePod on one adapter only.")).FontSize(sizeSmall).TextColor(p.InkMuted)
+
+		// The chosen entry as the control's label, so the row says which
+		// adapter is in use rather than only the address beside it.
+		sel := chosen
+		for i, id := range ids {
+			if id == sel {
+				sel = labels[i]
+				break
+			}
+		}
+		box := ui.Combobox(c, &sel, labels).Label(s.t("Adapter")).FillWidth()
+		if box.Changed() && s.deps.OnDiscoveryInterface != nil {
+			for i, label := range labels {
+				if label == sel {
+					s.deps.OnDiscoveryInterface(ids[i])
+					break
+				}
+			}
+		}
+
+		if chosen == "" {
+			ui.Text(c, s.t("A new adapter takes effect the next time the search runs.")).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+		}
+	}).Padding(0, 0, 20, 0).
+		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+}
+
 func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 	ui.Column(c).FillWidth().Gap(26).Children(func() {
 		// The mode switch, which is the one setting that changes what the app
@@ -1140,6 +1219,31 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			})
 			ui.Text(c, s.t("The shell starts in the tray at sign-in and connects to the "+
 				"last receiver, so nothing has to be opened.")).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+		// The adapter mDNS browses on. Nothing else in the app asks which way out
+		// the browsing should take, and on a machine with a VPN up that is the
+		// difference between finding the HomePod and finding nothing.
+		s.networkInterface(c, p, cfg)
+
+		// Silencing the local speakers while streaming. The desktop host does
+		// this by default, and it is what a user expects: the sound is going to
+		// the HomePod.
+		ui.Column(c).Gap(8).Children(func() {
+			mute := cfg.MuteWhileStreaming
+			ui.Row(c).FillWidth().Children(func() {
+				ui.Text(c, s.t("Mute the PC speakers while streaming")).FontSize(sizeBody).TextColor(p.Ink)
+				ui.Spacer(c).Grow(1)
+				ui.Switch(c, &mute).OnChange(func() {
+					if s.deps.OnMuteWhileStreaming != nil {
+						s.deps.OnMuteWhileStreaming(mute)
+					}
+				})
+			})
+			ui.Text(c, s.t("The sound is being sent to the HomePod, so playing it here too would "+
+				"be the same voice twice, one delayed behind the other.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)

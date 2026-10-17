@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"log"
+	"net"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +25,12 @@ var quiet = log.New(io.Discard, "", 0)
 // mDNS has no "the list is complete" moment, so results arrive over time and
 // the callback is called as they settle. A short settle window keeps the list
 // from flickering while a device's records arrive one at a time.
-func Browse(ctx context.Context, onChange func([]Receiver), onError func(error)) error {
+func Browse(ctx context.Context, onInterface int, onChange func([]Receiver), onError func(error)) error {
 	entries := make(chan *mdns.ServiceEntry, 64)
 
+	// One adapter, or the system's own choice when none is named: a machine with
+	// a VPN up can find its receivers only on one of its adapters, and which one
+	// is not something a scan on all of them can answer.
 	params := &mdns.QueryParam{
 		Service:     ServiceAirPlay,
 		Domain:      "local",
@@ -33,6 +38,9 @@ func Browse(ctx context.Context, onChange func([]Receiver), onError func(error))
 		Entries:     entries,
 		DisableIPv6: true,
 		Logger:      quiet,
+	}
+	if iface, err := net.InterfaceByIndex(onInterface); err == nil {
+		params.Interface = iface
 	}
 
 	// One collector per service type feeds the same set of records.
@@ -221,4 +229,70 @@ func markPresence(receivers []Receiver, seenAt map[string]time.Time, now time.Ti
 			}
 		}
 	}
+}
+
+// Interface is one network adapter the browse could use.
+type Interface struct {
+	// Index is the system's own id for it, which is what an interface is
+	// identified by: a name can be duplicated across a VPN's virtual adapters.
+	Index int
+	Name  string
+	// Addresses are the IPv4 addresses it holds, which is what says whether it
+	// could reach a receiver at all.
+	Addresses []string
+}
+
+// Interfaces lists the adapters a browse could use, in a stable order.
+//
+// An adapter with no IPv4 address is left out: it cannot carry mDNS to a
+// receiver, and offering it would be offering a choice that does nothing. A
+// loopback is left out for the same reason - the machine's own traffic is not
+// where a speaker advertises itself.
+func Interfaces() []Interface {
+	adapters, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	// An adapter with no addresses of its own is not offered: the flag that
+	// matters is whether it can carry a browse, and one that cannot is a choice
+	// that does nothing. Addrs returns an error alongside, which is why the
+	// function reads both and keeps the addresses.
+	return interfacesOn(adapters, func(a net.Interface) []net.Addr {
+		addrs, _ := a.Addrs()
+		return addrs
+	})
+}
+
+// interfacesOn is the listing over a given set of adapters.
+//
+// The addresses are read through a function rather than by calling the
+// adapter's own, so a test can name a network without holding one: the rule
+// worth asserting is which adapters are offered, and that is decided from flags
+// that a test can set on a struct it built itself.
+func interfacesOn(adapters []net.Interface, addrsOf func(net.Interface) []net.Addr) []Interface {
+	found := []Interface{}
+	for _, a := range adapters {
+		if a.Flags&net.FlagUp == 0 || a.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses := []string{}
+		for _, addr := range addrsOf(a) {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if v4 := ip.To4(); v4 != nil {
+				addresses = append(addresses, v4.String())
+			}
+		}
+		if len(addresses) == 0 {
+			continue
+		}
+		found = append(found, Interface{Index: a.Index, Name: a.Name, Addresses: addresses})
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].Index < found[j].Index })
+	return found
 }
