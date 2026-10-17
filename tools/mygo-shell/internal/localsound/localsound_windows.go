@@ -38,70 +38,6 @@ var (
 	guidFormatID = guidx("A45C254E-DF1C-4EFD-8020-67D146A850E0")
 )
 
-// The first three methods every COM interface has. Named so the interfaces
-// below read as "IUnknown's, then mine".
-type unknownVtbl struct {
-	queryInterface uintptr
-	addRef         uintptr
-	release        uintptr
-}
-
-// deviceEnumeratorVtbl is IMMDeviceEnumerator.
-type deviceEnumeratorVtbl struct {
-	unknownVtbl
-	// enumAudioEndpoints lists the endpoints of one flow. Its second argument is
-	// a device-state mask, and DEVICE_STATE_ACTIVE is the only state worth
-	// listing: an unplugged speaker is not a choice.
-	enumAudioEndpoints      uintptr
-	getDefaultAudioEndpoint uintptr
-	getDevice               uintptr
-	registerNotification    uintptr
-	unregisterNotification  uintptr
-}
-
-// deviceCollectionVtbl is IMMDeviceCollection.
-type deviceCollectionVtbl struct {
-	unknownVtbl
-	getCount uintptr
-	item     uintptr
-}
-
-// deviceVtbl is IMMDevice.
-type deviceVtbl struct {
-	unknownVtbl
-	activate          uintptr
-	openPropertyStore uintptr
-	getID             uintptr
-	getState          uintptr
-}
-
-// propertyStoreVtbl is IPropertyStore.
-type propertyStoreVtbl struct {
-	unknownVtbl
-	getCount uintptr
-	getAt    uintptr
-	getValue uintptr
-}
-
-// volumeVtbl is IAudioEndpointVolume.
-type volumeVtbl struct {
-	unknownVtbl
-	registerControlChangeNotify   uintptr
-	unregisterControlChangeNotify uintptr
-	getChannelCount               uintptr
-	setMasterVolumeLevel          uintptr
-	setMasterVolumeLevelScalar    uintptr
-	getMasterVolumeLevel          uintptr
-	getMasterVolumeLevelScalar    uintptr
-	setChannelVolumeLevel         uintptr
-	setChannelVolumeLevelScalar   uintptr
-	getChannelVolumeLevel         uintptr
-	getChannelVolumeLevelScalar   uintptr
-	setMute                       uintptr
-	getMute                       uintptr
-	getVolumeRange                uintptr
-}
-
 // EDataFlow's two directions, and ERole's console. Together, "render + console"
 // means the device the console audio is played through - what a user calls their
 // speakers.
@@ -128,32 +64,11 @@ func hresult(hr uintptr) error {
 	return fmt.Errorf("COM returned 0x%08x", uint32(hr))
 }
 
-// vt returns the vtable sitting at the head of a COM object, which is what the
-// structs above are declared to line up with.
-func vtptr(p unsafe.Pointer) unsafe.Pointer { return *(*unsafe.Pointer)(p) }
-
 // utf16String reads a null-terminated wide string, which is how Windows returns
 // device names.
 func utf16String(p *uint16) string {
 	return windows.UTF16PtrToString(p)
 }
-
-// release drops one reference to a COM object.
-func release(p unsafe.Pointer) {
-	if p == nil {
-		return
-	}
-	vt := (*unknownVtbl)(vtptr(p))
-	syscall.SyscallN(vt.release, uintptr(p))
-}
-
-// coInitializeEx is ole32's, and the rest of the COM entry points used.
-var (
-	ole32                = syscall.NewLazyDLL("ole32.dll")
-	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
-	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
-	procCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
-)
 
 const (
 	// COINIT_MULTITHREADED: nothing here needs a single-threaded apartment, and
@@ -168,11 +83,6 @@ const (
 // windowsGetCurrentThreadID is kernel32's GetCurrentThreadId, which returns the
 // id of the thread the caller is running on. It is the key an apartment is filed
 // under, because an apartment belongs to a thread and not to a goroutine.
-var (
-	kernel32               = syscall.NewLazyDLL("kernel32.dll")
-	procGetCurrentThreadID = kernel32.NewProc("GetCurrentThreadId")
-)
-
 func windowsGetCurrentThreadID() uint32 {
 	r, _, _ := procGetCurrentThreadID.Call()
 	return uint32(r)
@@ -225,12 +135,17 @@ type propertyKey struct {
 // Only the wide-string case is used, and only for the friendly name. The
 // structure is a 16-bit type, three reserved words, then a union that starts at
 // offset 8 - so a string lands there rather than at the beginning.
+//
+// The union member is a *uint16 rather than the uintptr the SDK writes it as.
+// Both are the same width, so the layout is unchanged, but a typed pointer is
+// what the value is: it can be read and freed without converting it back, and a
+// conversion from uintptr is what go vet cannot prove is safe.
 type propVariant struct {
 	vt        uint16
 	reserved1 uint16
 	reserved2 uint16
 	reserved3 uint16
-	pwszVal   uintptr
+	pwszVal   *uint16
 }
 
 var (
@@ -386,9 +301,9 @@ func identify(device unsafe.Pointer) (id, name string) {
 		return id, ""
 	}
 	// VT_LPWSTR: the string itself is a pointer the caller owns.
-	if value.vt == 31 && value.pwszVal != 0 {
-		name = utf16String((*uint16)(unsafe.Pointer(value.pwszVal)))
-		procCoTaskMemFree.Call(value.pwszVal)
+	if value.vt == 31 && value.pwszVal != nil {
+		name = utf16String(value.pwszVal)
+		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(value.pwszVal)))
 	}
 	if name == "" {
 		// The id is what the endpoint is known by, so a name that could not be

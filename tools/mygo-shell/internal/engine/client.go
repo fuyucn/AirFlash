@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -68,7 +69,23 @@ type Client struct {
 	// exitedCh is closed once, when the engine process ends.
 	exitedCh   chan struct{}
 	exitedOnce sync.Once
+
+	// malformed counts lines the engine sent that were not JSON, and
+	// malformedOnce makes the first one be logged with its reason rather than
+	// every one: a broken engine can send a line per event, and a log per event
+	// would drown the one that matters.
+	//
+	// Without this a malformed line is indistinguishable from an engine that
+	// stopped sending: the readings stall and nothing says why.
+	malformed     atomic.Uint64
+	malformedOnce sync.Once
 }
+
+// MalformedLines is how many lines the engine sent that were not JSON.
+//
+// It is exported so the shell can show it, and so a test can assert that a
+// malformed line was recorded rather than dropped.
+func (c *Client) MalformedLines() uint64 { return c.malformed.Load() }
 
 // ErrNotRunning is returned when no engine process is alive.
 var ErrNotRunning = errors.New("engine is not running")
@@ -150,7 +167,14 @@ func (c *Client) read(r io.Reader) {
 		}
 		var ev Event
 		if err := json.Unmarshal(line, &ev); err != nil {
-			continue // a malformed line must not kill the stream
+			// A malformed line must not kill the stream, but it must not vanish
+			// either: an engine bug that emits broken JSONL otherwise looks like
+			// an engine that stopped sending.
+			c.malformed.Add(1)
+			c.malformedOnce.Do(func() {
+				log.Printf("engine sent a line that is not JSON: %v: %.200q", err, line)
+			})
+			continue
 		}
 		ev.Raw = append(json.RawMessage(nil), line...)
 		if c.handler != nil {

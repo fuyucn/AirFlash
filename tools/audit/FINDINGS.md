@@ -25,7 +25,13 @@ a latent risk the current code happens not to hit.
 
 | severity | where | finding |
 |---|---|---|
-| P2 | `internal/localsound/localsound_windows.go:390` | `unsafe.Pointer(value.pwszVal)` trips `go vet` on the Windows build. Pre-existing. The value is a `uintptr` holding a pointer, which vet cannot see is live |
-| P2 | `internal/engine/client.go` `read` | a malformed line is skipped, so an engine bug that emits broken JSONL looks like an engine that stopped sending |
-| P2 | `main.go:719` `startDiscovery` | check-then-act on `discoveryCancel` with no lock. Only reachable from the UI thread today; any caller from a goroutine would start two browses |
-| P3 | `main.go` `stopStream` | `localsound.Restore()` runs on the UI thread. It is a COM round trip, so a slow audio service stalls the click that stopped playback |
+| — | — | none. New findings go here. |
+
+## Closed by the swe-loop run
+
+| severity | where | finding | how it was closed |
+|---|---|---|---|
+| P2 | `internal/localsound/localsound_windows.go` | `unsafe.Pointer(value.pwszVal)` tripped `go vet` on the Windows build. The union member was a `uintptr` converted back to a pointer, which vet cannot prove safe | typed the member `*uint16`, which is the same width and needs no conversion; the COM vtables moved to `com_windows.go`, which also brought the file under the 400-line gate |
+| P2 | `internal/engine/client.go` `read` | a malformed line was skipped without a trace, so an engine bug that emitted broken JSONL looked like an engine that stopped sending | `Client.MalformedLines()` counts them and the first is logged with its reason and a quoted excerpt |
+| P2 | `main.go` `startDiscovery` | check-then-act on `discoveryCancel`: two callers could both see nil and both start a browse, the second overwriting the first's cancel | `claimBrowse` uses a compare-and-swap, and the loser cancels the context it made |
+| P3 | `main.go` `stopStream` | `localsound.Restore()` ran on the UI thread; a slow audio service stalled the click that asked to stop | `restoreSpeakers` runs it in a goroutine, serialised by a mutex, with the error still logged |

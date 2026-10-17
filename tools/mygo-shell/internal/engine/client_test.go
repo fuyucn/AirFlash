@@ -173,6 +173,40 @@ func TestMalformedLinesDoNotStopTheReader(t *testing.T) {
 	}
 }
 
+func TestAMalformedLineIsCountedRatherThanDropped(t *testing.T) {
+	// Skipping junk keeps the stream alive, but a skip that leaves no trace makes
+	// an engine bug that emits broken JSONL look like an engine that stopped
+	// sending: the readings stall and nothing says why.
+	got := make(chan string, 4)
+	c := &Client{handler: func(ev Event) { got <- ev.Event }}
+	go c.read(strings.NewReader("not json\n" + `{"version":1,"id":"x","session_id":"s","event":"streaming"}` + "\n"))
+
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the reader stopped before the valid line")
+	}
+	if n := c.MalformedLines(); n != 1 {
+		t.Errorf("malformed lines = %d, want 1: a skipped line has to be recorded", n)
+	}
+}
+
+func TestAValidStreamCountsNoMalformedLines(t *testing.T) {
+	// The counter must not fire on ordinary traffic, or it is noise nobody reads.
+	got := make(chan string, 4)
+	c := &Client{handler: func(ev Event) { got <- ev.Event }}
+	go c.read(strings.NewReader(`{"version":1,"id":"x","session_id":"s","event":"streaming"}` + "\n"))
+
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the reader did not deliver the line")
+	}
+	if n := c.MalformedLines(); n != 0 {
+		t.Errorf("malformed lines = %d on valid input, want 0", n)
+	}
+}
+
 func firstLine(b []byte) string {
 	for i, ch := range b {
 		if ch == '\n' {

@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -112,6 +113,13 @@ type App struct {
 	// the loop waits between attempts, and without this it would wake and start
 	// an engine the user had just asked to be silent.
 	stopping atomic.Bool
+
+	// restoreMu serialises the local-speaker restore. It runs off the UI thread,
+	// because it is a COM round trip to the audio service and a slow one would
+	// stall the click that asked to stop. The mutex is what keeps two stops from
+	// interleaving their restore: the endpoint state one of them reads would be
+	// the other's half-finished work.
+	restoreMu sync.Mutex
 
 	// lastPaint is when the open surfaces were last asked to redraw. The
 	// engine reports more often than a person can read, so redraws are held to
@@ -689,6 +697,23 @@ func (a *App) pair(r discovery.Receiver) {
 	}
 }
 
+// restoreSpeakers gives the local speakers back after a stream, off the UI
+// thread.
+//
+// It is a COM round trip to the audio service. Running it inline meant a slow
+// service stalled the click that asked to stop, so it goes to a goroutine; the
+// mutex keeps two stops from interleaving, and a failure is logged because a
+// failed restore leaves the speakers silent with nothing else to say why.
+func (a *App) restoreSpeakers() {
+	go func() {
+		a.restoreMu.Lock()
+		defer a.restoreMu.Unlock()
+		if err := localsound.Restore(); err != nil {
+			log.Printf("restore the PC speakers: %v", err)
+		}
+	}()
+}
+
 // pairPin sends the PIN the receiver asked for, which completes pairing.
 //
 // Both surfaces ask for it - the panel's prompt and the window's - and both send
@@ -716,11 +741,10 @@ func (a *App) setDeviceVolume(rec discovery.Receiver, volume float64) {
 
 // startDiscovery browses for receivers while a window is open.
 func (a *App) startDiscovery() {
-	if a.discoveryCancel.Load() != nil {
+	ctx, _, ok := claimBrowse(&a.discoveryCancel)
+	if !ok {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	a.discoveryCancel.Store(&cancel)
 
 	go func() {
 		// The interface to browse on, or none named, which is the system's own
@@ -743,6 +767,22 @@ func (a *App) startDiscovery() {
 			log.Printf("discovery stopped: %v", err)
 		}
 	}()
+}
+
+// claimBrowse takes the one browse slot, or reports that it was already taken.
+//
+// A load-then-store is a check-then-act: two callers can both see nil and both
+// start a browse, and the second then overwrites the first's cancel, so the first
+// can never be stopped. The compare-and-swap makes the check and the claim one
+// step. The loser cancels the context it made rather than leaving it running with
+// nothing holding its cancel.
+func claimBrowse(slot *atomic.Pointer[context.CancelFunc]) (context.Context, context.CancelFunc, bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if !slot.CompareAndSwap(nil, &cancel) {
+		cancel()
+		return nil, nil, false
+	}
+	return ctx, cancel, true
 }
 
 // stopDiscovery ends the browse and releases the cancel.
@@ -942,12 +982,11 @@ func (a *App) stopStream() {
 	// be visible before the engine is asked to stop so that a loop waking up
 	// sees it.
 	a.stopping.Store(true)
-	// The stream is going away, so what was silenced for it is given back. A
-	// failure here leaves the speakers silent and is worth logging rather than
-	// swallowing: the user hears nothing and has no other way to know why.
-	if err := localsound.Restore(); err != nil {
-		log.Printf("restore the PC speakers: %v", err)
-	}
+	// The stream is going away, so what was silenced for it is given back - but
+	// not on this thread. The restore is a COM round trip to the audio service,
+	// and a slow one would stall the click that asked to stop; the speakers stay
+	// silent until it lands either way.
+	a.restoreSpeakers()
 	a.playing.Store(nil)
 	if c := a.client.Load(); c != nil {
 		_, _ = c.Stop()
