@@ -99,6 +99,22 @@ The counters come from the engine as running totals for the session, so each
 report replaces the last rather than adding to it. They add up only across the
 two halves of a stereo pair, where each half counts its own.
 
+## What the desktop host has that this does not
+
+Two things, both of which need the engine to change rather than the shell:
+
+- **Real-time buffer adaptation.** The desktop host can move the target mid-session
+  when the network degrades. The engine takes a latency once, at `start`, and has
+  no command to change it during a stream.
+- **Busy detection.** A receiver already streaming to another device can be told
+  apart by a bit in the `statusFlags` of its `/info` response
+  (`0x20000`). The engine reads `/info` for its model and version and reports
+  nothing else, so the shell has nothing to read.
+
+Everything else the desktop host does, this does: per-receiver settings, the
+equalizer, reconnect, standby, start at login, capture endpoint, discovery
+adapter, quiet-mode autostart, and PIN pairing.
+
 ## Lightweight mode
 
 Settings has one switch that changes what the app costs to run:
