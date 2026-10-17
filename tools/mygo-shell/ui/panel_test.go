@@ -358,6 +358,8 @@ func TestEveryInterfaceStringHasAChineseEntry(t *testing.T) {
 		// Readings.
 		"Target", "ms delay", "on target", "waiting for playback", "nothing measured yet",
 		"slightly over target", "well over target",
+		// Settings.
+		"SAMPLE RATE", "A new rate applies to the next stream.",
 		// The charts.
 		"LATENCY OVER TIME", "GAPS", "VOLUME", "CAPTURE", "LOSSES", "LATENCY",
 		"One mark per second of playback appears here. Nothing has been lost so far.",

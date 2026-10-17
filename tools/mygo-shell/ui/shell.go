@@ -48,6 +48,8 @@ type Deps struct {
 	// OnLanguage changes the language, which rebuilds the window so the change
 	// is not half applied.
 	OnLanguage func(string)
+	// OnSampleRate changes the rate the stream is captured at.
+	OnSampleRate func(int)
 	// OnEqualizer reports that the equalizer changed, which a live stream is told
 	// about at once and a new one inherits from settings.
 	OnEqualizer func()
@@ -1098,6 +1100,28 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 			ui.Text(c, s.t("Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
 				"either way.")).FontSize(sizeSmall).TextColor(p.InkMuted)
+		}).Padding(0, 0, 20, 0).
+			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+
+		// The capture rate. The engine takes 44100 or 48000, and the pair is not
+		// interchangeable: a HomePod is asked for whichever the stream is at, and
+		// 48 kHz halves the work the engine does per second of audio.
+		ui.Column(c).Gap(8).Children(func() {
+			sectionLabel(s.deps.Words, c, p, "SAMPLE RATE")
+			rates := []int{44100, 48000}
+			labels := []string{"44.1 kHz", "48 kHz"}
+			index := 0
+			for i, r := range rates {
+				if r == cfg.SampleRate {
+					index = i
+				}
+			}
+			seg := ui.Segmented(c, &index, labels...)
+			if seg.Changed() && s.deps.OnSampleRate != nil {
+				s.deps.OnSampleRate(rates[index])
+			}
+			ui.Text(c, s.t("A new rate applies to the next stream.")).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
 		}).Padding(0, 0, 20, 0).
 			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
 
