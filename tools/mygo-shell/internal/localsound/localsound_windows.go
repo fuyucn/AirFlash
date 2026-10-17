@@ -102,11 +102,13 @@ type volumeVtbl struct {
 	getVolumeRange                uintptr
 }
 
-// EDataFlow's render, and ERole's console, which together mean "the device the
-// console audio is played through" - what a user calls their speakers.
+// EDataFlow's two directions, and ERole's console. Together, "render + console"
+// means the device the console audio is played through - what a user calls their
+// speakers.
 const (
-	dataFlowRender = 1
-	roleConsole    = 0
+	dataFlowRender  = 1
+	dataFlowCapture = 0
+	roleConsole     = 0
 )
 
 // DEVICE_STATE_ACTIVE.
@@ -237,7 +239,12 @@ func enumerator() (unsafe.Pointer, error) {
 	return createInstance(&clsidMMDeviceEnumerator, &iidIMMDeviceEnumerator)
 }
 
-// endpoints lists the render endpoints.
+// endpoints lists every live endpoint, both directions.
+//
+// Both directions, because the capture endpoint the engine records from and the
+// render endpoint the local speakers are on are the same list of hardware: a
+// machine with two sound cards has two of each, and choosing one to capture from
+// is choosing which sound card the PC's audio comes out of.
 func endpoints() []Endpoint {
 	var out []Endpoint
 	_ = withCom(func() error {
@@ -248,38 +255,40 @@ func endpoints() []Endpoint {
 		defer release(enum)
 		vt := (*deviceEnumeratorVtbl)(vtptr(enum))
 
-		var collection unsafe.Pointer
-		hr, _, _ := syscall.SyscallN(vt.enumAudioEndpoints, uintptr(enum),
-			dataFlowRender, deviceStateActive, uintptr(unsafe.Pointer(&collection)))
-		if err := hresult(hr); err != nil || collection == nil {
-			return err
-		}
-		defer release(collection)
-
-		count := 0
-		vtc := (*deviceCollectionVtbl)(vtptr(collection))
-		hr, _, _ = syscall.SyscallN(vtc.getCount, uintptr(collection),
-			uintptr(unsafe.Pointer(&count)))
-		if err := hresult(hr); err != nil {
-			return err
-		}
-
-		for i := 0; i < count; i++ {
-			var device unsafe.Pointer
-			hr, _, _ = syscall.SyscallN(vtc.item, uintptr(collection),
-				uintptr(i), uintptr(unsafe.Pointer(&device)))
-			if hresult(hr) != nil || device == nil {
+		// EDataFlow's capture, then render, so a card's two endpoints land
+		// together in the list.
+		for _, flow := range []int{dataFlowCapture, dataFlowRender} {
+			var collection unsafe.Pointer
+			hr, _, _ := syscall.SyscallN(vt.enumAudioEndpoints, uintptr(enum),
+				uintptr(flow), deviceStateActive, uintptr(unsafe.Pointer(&collection)))
+			if hresult(hr) != nil || collection == nil {
 				continue
 			}
-			id, name := identify(device)
-			release(device)
-			if id == "" {
+
+			count := 0
+			vtc := (*deviceCollectionVtbl)(vtptr(collection))
+			hr, _, _ = syscall.SyscallN(vtc.getCount, uintptr(collection),
+				uintptr(unsafe.Pointer(&count)))
+			if hresult(hr) != nil {
+				release(collection)
 				continue
 			}
-			// Render only, and the enum above was asked for that flow already:
-			// the field is what a caller filters on without having to know what
-			// the query above asked for.
-			out = append(out, Endpoint{ID: id, Name: name})
+
+			for i := 0; i < count; i++ {
+				var device unsafe.Pointer
+				hr, _, _ = syscall.SyscallN(vtc.item, uintptr(collection),
+					uintptr(i), uintptr(unsafe.Pointer(&device)))
+				if hresult(hr) != nil || device == nil {
+					continue
+				}
+				id, name := identify(device)
+				release(device)
+				if id == "" {
+					continue
+				}
+				out = append(out, Endpoint{ID: id, Name: name, Capture: flow == dataFlowCapture})
+			}
+			release(collection)
 		}
 		return nil
 	})

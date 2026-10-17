@@ -381,6 +381,9 @@ func (a *App) openWindow(page string) {
 			a.stopDiscovery()
 			a.startDiscovery()
 		},
+		OnCaptureEndpoint: func(id string) {
+			a.settings.Update(func(s *settings.Settings) { s.CaptureEndpoint = id })
+		},
 		OnMuteWhileStreaming: func(on bool) {
 			a.settings.Update(func(s *settings.Settings) { s.MuteWhileStreaming = on })
 			// The setting is what a session applies when it starts, so it takes

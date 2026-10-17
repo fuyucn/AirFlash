@@ -12,6 +12,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/localsound"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 )
@@ -79,6 +80,8 @@ type Deps struct {
 	OnReconnectAttempts func(int)
 	// OnMuteWhileStreaming silences the local speakers while a stream runs.
 	OnMuteWhileStreaming func(bool)
+	// OnCaptureEndpoint changes which audio endpoint the engine records from.
+	OnCaptureEndpoint func(id string)
 	// OnOpenWindow opens the main window on a named page, which is how the
 	// panel reaches the full picture and the settings.
 	OnOpenWindow func(string)
@@ -1144,6 +1147,73 @@ func receiverName(name, host string) string {
 	return host
 }
 
+// captureEndpoint is the audio endpoint the engine records from.
+//
+// The engine's loopback capture reads whatever the console is being played
+// through, which is right on a machine with one sound card and wrong on one with
+// two: a USB interface the PC is actually playing through is not necessarily the
+// one Windows calls default. A choice here is what such a machine needs, and
+// with one card there is nothing to choose and the default stands.
+func (s *Shell) captureEndpoint(c *ui.Context, p palette, cfg settings.Settings) {
+	sectionLabel(s.deps.Words, c, p, "AUDIO INPUT")
+
+	adapters := localsound.Endpoints()
+	ids := []string{""}
+	labels := []string{s.t("System default")}
+	for _, e := range adapters {
+		// Only render endpoints can be captured from by loopback: a microphone
+		// records the room, not what the PC is playing.
+		if e.Capture {
+			continue
+		}
+		ids = append(ids, e.ID)
+		labels = append(labels, e.Name)
+	}
+
+	chosen := cfg.CaptureEndpoint
+	known := false
+	for _, id := range ids {
+		if id == chosen {
+			known = true
+			break
+		}
+	}
+	if !known {
+		// An endpoint that has gone, which happens when the setting was made on
+		// another machine or the card was unplugged.
+		chosen = ""
+	}
+
+	ui.Column(c).FillWidth().Gap(8).Children(func() {
+		ui.Text(c, s.t("The sound the PC is playing is recorded from this device. "+
+			"A machine with one sound card has nothing to choose.")).
+			FontSize(sizeSmall).TextColor(p.InkMuted)
+
+		sel := chosen
+		for i, id := range ids {
+			if id == sel {
+				sel = labels[i]
+				break
+			}
+		}
+		box := ui.Combobox(c, &sel, labels).Label(s.t("Input device")).FillWidth()
+		if box.Changed() && s.deps.OnCaptureEndpoint != nil {
+			for i, label := range labels {
+				if label == sel {
+					s.deps.OnCaptureEndpoint(ids[i])
+					break
+				}
+			}
+		}
+
+		if chosen != "" {
+			ui.Text(c, s.t("A new device applies to the next stream.")).
+				FontSize(sizeSmall).TextColor(p.InkMuted)
+		}
+	}).Padding(0, 0, 20, 0).
+		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+}
+
 // settingsPage holds the mode switch, which is the one setting that changes
 // what the app costs to run.
 // equalizerPage is the ten-band graphic equalizer.
@@ -1383,6 +1453,11 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings) {
 		// the browsing should take, and on a machine with a VPN up that is the
 		// difference between finding the HomePod and finding nothing.
 		s.networkInterface(c, p, cfg)
+
+		// What the engine records from. It is the system's default by default,
+		// which is right for a machine with one sound card; a machine with two
+		// is where the choice matters.
+		s.captureEndpoint(c, p, cfg)
 
 		// Silencing the local speakers while streaming. The desktop host does
 		// this by default, and it is what a user expects: the sound is going to

@@ -136,6 +136,11 @@ func (a *App) startAttempt(s session) {
 		opts.Gain = cfg.Gain
 	}
 	opts.SampleRate = cfg.SampleRate
+	// The endpoint the engine captures from, or the system's default render
+	// device when none is named. A machine with more than one sound card is the
+	// case: the PC's audio may come out of a USB interface the engine would not
+	// otherwise pick up.
+	opts.CaptureEndpoint = cfg.CaptureEndpoint
 	// The equalizer goes in with the stream, so what is heard is what the
 	// settings say from the first packet rather than from the first edit.
 	opts.Equalizer = cfg.Equalizer

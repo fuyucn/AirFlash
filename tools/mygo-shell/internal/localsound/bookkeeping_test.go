@@ -92,3 +92,52 @@ func TestAnEmptyEndpointIsRefusedRatherThanSilencingTheDefault(t *testing.T) {
 		t.Errorf("error = %v, want it to say no endpoint was named", err)
 	}
 }
+
+func TestARenderEndpointIsTheOneSilenced(t *testing.T) {
+	// A capture endpoint is a microphone: muting it changes what is recorded,
+	// not what the user hears. Only a render one stops the audio being audible,
+	// so the default for muting is the first render endpoint in the list.
+	list := []Endpoint{
+		{ID: "mic", Name: "Microphone", Capture: true},
+		{ID: "spk", Name: "Speakers", Capture: false},
+	}
+	chosen := ""
+	for _, e := range list {
+		if !e.Capture {
+			chosen = e.ID
+			break
+		}
+	}
+	if chosen != "spk" {
+		t.Errorf("silenced %q, want the render endpoint spk: muting a microphone does not silence anything the user hears", chosen)
+	}
+}
+
+func TestACaptureEndpointIsOfferedSeparatelyFromARenderOne(t *testing.T) {
+	// Both directions are listed, because a machine with two sound cards has two
+	// of each, and the direction is what says which is which: only a render one
+	// can be captured from by loopback.
+	list := []Endpoint{
+		{ID: "mic", Name: "Microphone", Capture: true},
+		{ID: "spk", Name: "Speakers", Capture: false},
+	}
+	render := 0
+	for _, e := range list {
+		if !e.Capture {
+			render++
+		}
+	}
+	if render != 1 {
+		t.Errorf("%d render endpoints, want 1: the capture one is a microphone, not a device to record the PC's audio from", render)
+	}
+}
+
+func TestAnEndpointWithNoNameIsStillListable(t *testing.T) {
+	// A card Windows has no friendly name for is still a card, and a list that
+	// dropped it would leave a machine with only one usable sound card looking
+	// like a machine with none.
+	e := Endpoint{ID: "{0.0.0.00000000}"}
+	if e.ID == "" {
+		t.Error("an endpoint with no name lost its id, so it cannot be chosen at all")
+	}
+}

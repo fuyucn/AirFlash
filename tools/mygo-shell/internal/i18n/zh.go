@@ -95,6 +95,12 @@ var chinese = map[string]string{
 	"Mute the PC speakers while streaming": "播放时静音电脑扬声器",
 	"The sound is being sent to the HomePod, so playing it here too would be the same voice twice, one delayed behind the other.": "声音正在发送到 HomePod，本地再播一遍就是同一个声音两次，其中一次还会慢半拍。",
 
+	// Audio input.
+	"AUDIO INPUT":  "音频输入",
+	"Input device": "输入设备",
+	"The sound the PC is playing is recorded from this device. A machine with one sound card has nothing to choose.": "电脑播放的声音从这个设备录制。只有一块声卡的电脑没有可选的。",
+	"A new device applies to the next stream.": "新设备在下次开始播放时生效。",
+
 	// Pairing.
 	"Pairing":                   "配对",
 	"Pair":                      "配对",
