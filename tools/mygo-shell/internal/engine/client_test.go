@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -308,3 +309,52 @@ func TestACommandAfterCloseIsRefusedRatherThanWritten(t *testing.T) {
 		t.Error("a command after Close was accepted, so a caller would think it was applied")
 	}
 }
+
+func TestACloseCanStillHappenWhileAWriteIsStuck(t *testing.T) {
+	// Send held the client's lock across the write to the engine's stdin. That
+	// write blocks when the pipe buffer is full and the engine has stopped
+	// reading - a wedged or exiting engine. While it blocked, Close could not
+	// run either, because Close takes the same lock: so the one thing that can
+	// tell a wedged engine to go away was itself waiting behind the write that
+	// needed it to.
+	//
+	// The lock guards the handle, not the write.
+	c := &Client{cmd: &exec.Cmd{}, stdin: blockedWriter{}, session: "s"}
+
+	writing := make(chan struct{})
+	go func() {
+		c.Send("hello", nil)
+		close(writing)
+	}()
+	select {
+	case <-writing:
+		t.Fatal("the write did not block, so this test proves nothing")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Close must get through while the write is still stuck.
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }()
+	select {
+	case <-closed:
+		// What Close does is not the point; that it returned is.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked behind a stuck write: a wedged engine cannot be shut down")
+	}
+
+	// And a command sent after the close is refused rather than written, so the
+	// handle is not used once it is gone.
+	if _, err := c.Send("stop", nil); err != ErrNotRunning {
+		t.Errorf("a command after Close returned %v, want %v", err, ErrNotRunning)
+	}
+}
+
+// blockedWriter is a stdin the engine never reads, so a write to it blocks the
+// way a full pipe does.
+type blockedWriter struct{}
+
+func (blockedWriter) Write(p []byte) (int, error) {
+	select {}
+}
+
+func (blockedWriter) Close() error { return nil }

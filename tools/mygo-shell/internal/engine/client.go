@@ -192,15 +192,22 @@ func drain(r io.Reader) {
 
 // Send writes one command and returns the id it used.
 func (c *Client) Send(command string, params any) (string, error) {
+	// The lock guards the handle, not the write. A write to the engine's stdin
+	// blocks when the pipe buffer is full and the engine has stopped reading - a
+	// wedged engine, or one on its way out. Holding the lock across it would
+	// block every other command on the same lock, so the caller that would
+	// notice the engine is gone could not be the one that got through: Stop from
+	// the UI thread, the session loop's own commands, all stuck behind a write
+	// that will never finish.
+	//
+	// So the handle is taken under the lock, written to outside it, and the
+	// handle cleared under the lock again if the write found it closed.
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	// stdin is nil once Close has been called: the engine has been asked to
-	// exit and nothing will read what is written to it. Saying so is what lets
-	// the caller notice the engine is gone, rather than believe a command it
-	// sent was applied.
 	if c.cmd == nil || c.stdin == nil || c.exited.Load() {
+		c.mu.Unlock()
 		return "", ErrNotRunning
 	}
+	stdin := c.stdin
 	id := fmt.Sprintf("c%d", c.seq.Add(1))
 	payload := map[string]any{
 		"version":    ProtocolVersion,
@@ -211,11 +218,20 @@ func (c *Client) Send(command string, params any) (string, error) {
 	if params != nil {
 		payload["params"] = params
 	}
+	c.mu.Unlock()
+
 	line, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
-	if _, err := c.stdin.Write(append(line, '\n')); err != nil {
+	if _, err := stdin.Write(append(line, '\n')); err != nil {
+		c.mu.Lock()
+		// The write found the handle closed: a Close that ran while this write
+		// was in flight. Remember it, so the next command says so too.
+		if c.stdin == stdin {
+			c.stdin = nil
+		}
+		c.mu.Unlock()
 		return "", fmt.Errorf("write %s: %w", command, err)
 	}
 	return id, nil
