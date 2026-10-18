@@ -716,7 +716,7 @@ func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st eng
 				ui.Text(c, fmt.Sprintf("%.0f%%", gain*100)).
 					FontSize(sizeBody).TextColor(p.InkMuted)
 			})
-			ui.Slider(c, &gain, 0, 1).FillWidth().OnChange(func() {
+			ui.Slider(c, &gain, 0, 1).FillWidth().Label(s.t("VOLUME")).OnChange(func() {
 				if s.deps.OnGain != nil {
 					s.deps.OnGain(gain)
 				}
@@ -1414,6 +1414,7 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 					TextColor(p.InkMuted)
 			})
 			ui.Slider(c, &preamp, -equalizer.LimitDB, equalizer.LimitDB).FillWidth().
+				Label(s.t("Preamp")).
 				OnChange(func() {
 					if s.deps.OnEqualizerPreamp != nil {
 						s.deps.OnEqualizerPreamp(preamp)
@@ -1429,6 +1430,7 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 					ui.Text(c, equalizer.Label(i)).FontSize(sizeSmall).TextColor(p.Ink).
 						Width(64)
 					ui.Slider(c, &band, -equalizer.LimitDB, equalizer.LimitDB).Grow(1).
+						Label(equalizer.Label(i)).
 						OnChange(func() {
 							if s.deps.OnEqualizerBand != nil {
 								s.deps.OnEqualizerBand(i, band)
@@ -1601,7 +1603,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 				attempts := float64(cfg.ReconnectAttempts)
 				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
 					ui.Text(c, s.t("Attempts")).FontSize(sizeSmall).TextColor(p.InkMuted)
-					ui.Slider(c, &attempts, 1, 20).Grow(1).OnChange(func() {
+					ui.Slider(c, &attempts, 1, 20).Grow(1).Label(s.t("Attempts")).OnChange(func() {
 						if s.deps.OnReconnectAttempts != nil {
 							s.deps.OnReconnectAttempts(int(attempts))
 						}

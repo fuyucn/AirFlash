@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -948,5 +950,33 @@ func TestChoosingALatencyModeChangesTheSetting(t *testing.T) {
 	if cfg.Current().LatencyMs != 500 || cfg.Current().LatencyAuto {
 		t.Errorf("settings are %d ms auto=%v, want 500 pinned",
 			cfg.Current().LatencyMs, cfg.Current().LatencyAuto)
+	}
+}
+
+func TestEverySliderHasAnAccessibleName(t *testing.T) {
+	// A slider with no Label is announced as "slider" and its value, with no
+	// word saying what it controls - on a page with ten equalizer bands that is
+	// ten controls nobody can tell apart. The framework names a control with
+	// Label; this checks that every Slider in the package has one.
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slider := regexp.MustCompile(`(?s)ui\.Slider\(c,.*?\.Label\(`)
+	anySlider := regexp.MustCompile(`(?s)ui\.Slider\(c,`)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all := len(anySlider.FindAll(src, -1))
+		named := len(slider.FindAll(src, -1))
+		if all != named {
+			t.Errorf("%s has %d sliders and %d with a Label", name, all, named)
+		}
 	}
 }

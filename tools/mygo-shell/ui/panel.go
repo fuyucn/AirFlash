@@ -377,7 +377,7 @@ func (p *Panel) volumeRow(c *ui.Context, pal palette, rec discovery.Receiver) {
 	}
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, p.t("VOL")).FontSize(sizeSmall).TextColor(pal.InkMuted).LetterSpacing(0.9)
-		ui.Slider(c, &vol, 0, 1).Grow(1).OnChange(func() {
+		ui.Slider(c, &vol, 0, 1).Grow(1).Label(p.t("VOLUME")).OnChange(func() {
 			p.volume = vol
 			p.volumeKnown = true
 			if p.deps.OnDeviceVolume != nil {
