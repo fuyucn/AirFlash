@@ -26,12 +26,13 @@ func PanelWidth() int { return panelWidth }
 type Panel struct {
 	deps Deps
 
-	// volume is the playing receiver's volume. There is one, not one per
-	// receiver, because the engine's command addresses the session and a
-	// session is one receiver.
+	// volume is the playing receiver's volume while it is being dragged. Once
+	// the engine reports the value it actually applied, that report is what the
+	// slider shows: the two can differ when a speaker refuses a change.
 	volume float64
-	// volumeKnown is false until the user has moved the slider, so the control
-	// shows the receiver's own volume rather than claiming one.
+	// volumeKnown is false until the user has moved the slider in this panel.
+	// Until then the control shows what the receiver reported, so opening the
+	// panel does not claim a volume nobody set.
 	volumeKnown bool
 
 	// pin is what has been typed into the pairing prompt. It is the panel's
@@ -342,7 +343,16 @@ func (p *Panel) silenceRow(c *ui.Context, pal palette, st engine.Metrics) {
 // volumeRow is the playing receiver's own volume, which the engine sets on the
 // device rather than in the local mix.
 func (p *Panel) volumeRow(c *ui.Context, pal palette, rec discovery.Receiver) {
+	// What the receiver last said it is at, unless the user is mid-drag and the
+	// read-back has not caught up yet. Showing the engine's value is what makes
+	// the control honest: a speaker that refused a change snaps back.
 	vol := p.volume
+	if !p.volumeKnown {
+		if st := p.deps.State.Snapshot(); st.HasDeviceVolume {
+			vol = st.DeviceVolume
+			p.volume = vol
+		}
+	}
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, p.t("VOL")).FontSize(sizeSmall).TextColor(pal.InkMuted).LetterSpacing(0.9)
 		ui.Slider(c, &vol, 0, 1).Grow(1).OnChange(func() {

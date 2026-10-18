@@ -529,3 +529,33 @@ func TestAPhaseTheShellKnowsIsTakenAsItIs(t *testing.T) {
 		t.Errorf("phase = %q, want the engine's own", got)
 	}
 }
+
+func TestTheReportedDeviceVolumeIsRead(t *testing.T) {
+	// The engine reads the speaker's volume back after every change and once a
+	// second, and sends it as device_volume. Nothing read that event, so the
+	// panel's slider showed where the user had dragged it rather than where the
+	// speaker actually was - a control that looks applied when it is not.
+	st := NewState()
+	st.Apply(Event{Event: "device_volume", Raw: []byte(
+		`{"event":"device_volume","volume":0.42,"available":true}`)})
+
+	m := st.Snapshot()
+	if !m.HasDeviceVolume {
+		t.Fatal("the reported volume was not kept")
+	}
+	if m.DeviceVolume != 0.42 {
+		t.Errorf("volume = %v, want 0.42", m.DeviceVolume)
+	}
+}
+
+func TestAnUnavailableDeviceVolumeIsNotClaimed(t *testing.T) {
+	// A speaker that does not report its volume says so with available:false.
+	// Taking the null as zero would snap the slider to silent.
+	st := NewState()
+	st.Apply(Event{Event: "device_volume", Raw: []byte(
+		`{"event":"device_volume","volume":null,"available":false}`)})
+
+	if st.Snapshot().HasDeviceVolume {
+		t.Error("a volume that was not available was claimed")
+	}
+}

@@ -130,6 +130,15 @@ type Metrics struct {
 	Pairing   bool
 	PairingOn string
 
+	// DeviceVolume is the volume the receiver itself reported, 0 to 1, and
+	// HasDeviceVolume says whether it has said anything. The engine reads the
+	// value back after every change and once a second, so this is what keeps the
+	// slider where the speaker actually is rather than where it was last
+	// dragged.
+	DeviceVolume    float64
+	HasDeviceVolume bool
+	DeviceVolumeErr string
+
 	// Reconnecting is set while a dropped session is being retried, with the
 	// attempt and the total. The engine has no part in this: the retry is the
 	// shell's, so the numbers are set from here rather than read from an event.
@@ -400,6 +409,35 @@ func (s *State) Apply(ev Event) {
 		s.metrics.Pairing = false
 		s.metrics.PairingOn = ""
 		s.metrics.Phase = PhaseNegotiating
+	case "device_volume":
+		// The receiver's own volume, read back after a change and once a second.
+		// The slider is drawn from this, so without it the control shows what
+		// the user last dragged to even when the speaker refused the change.
+		var v struct {
+			Volume    *float64 `json:"volume"`
+			Available bool     `json:"available"`
+			Message   string   `json:"message"`
+		}
+		if json.Unmarshal(ev.Raw, &v) != nil {
+			break
+		}
+		if v.Message != "" {
+			s.metrics.DeviceVolumeErr = v.Message
+		} else {
+			s.metrics.DeviceVolumeErr = ""
+		}
+		if v.Available && v.Volume != nil {
+			vol := *v.Volume
+			if vol < 0 {
+				vol = 0
+			}
+			if vol > 1 {
+				vol = 1
+			}
+			s.metrics.DeviceVolume = vol
+			s.metrics.HasDeviceVolume = true
+		}
+
 	case "capture_metrics":
 		// The local capture side, once a second. Two things are read from it:
 		// the counters, which the Stats page shows, and whether the PC is
