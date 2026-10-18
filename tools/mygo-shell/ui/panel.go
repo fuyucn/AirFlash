@@ -276,9 +276,13 @@ func (p *Panel) pairing(c *ui.Context, pal palette, st engine.Metrics) {
 		which = p.t("the receiver")
 	}
 
-	ui.Column(c).FillWidth().Padding(10, 10, 10, 10).Gap(9).Radius(0).
-		Background(pal.Hover).
-		BorderWidth(1).BorderStyle(ui.BorderDashed).BorderColor(pal.Warning).
+	// A raised card with the warning colour on its edge: it is the one block
+	// that asks the user to do something, so it steps out of the page and says
+	// so, in the same rounded language as every other block.
+	ui.Column(c).FillWidth().Padding(14, 14).Gap(9).Radius(radiusBlock).
+		Background(pal.Surface).
+		BorderWidth(1).BorderStyle(ui.BorderSolid).BorderColor(pal.Warning).
+		Shadow(0, 1, 3, 0, pal.Shadow).
 		Children(func() {
 			ui.Text(c, fmt.Sprintf(p.t("Enter the PIN shown on %s"), which)).
 				FontSize(sizeBody).TextColor(pal.Ink)
