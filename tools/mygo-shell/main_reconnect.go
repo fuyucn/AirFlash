@@ -188,14 +188,8 @@ func isAuthFailure(message string) bool {
 	return false
 }
 
-// repaint redraws whatever surface is open, and records the paint.
-//
-// It records it because a paint it did not record would be followed at once by
-// another: the throttle would still think the last one was an interval ago. A
-// phase that paints now therefore starts the interval for the readings that
-// follow it, rather than being charged for twice.
+// repaint redraws whatever surface is open.
 func (a *App) repaint() {
-	a.lastPaint.Store(time.Now().UnixMilli())
 	if w := a.win.Load(); w != nil {
 		w.Invalidate()
 	}

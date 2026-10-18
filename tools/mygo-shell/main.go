@@ -263,7 +263,9 @@ func (a *App) onEngineEvent(ev engine.Event) {
 	a.repaint()
 }
 
-// toPaint reports whether this event is owed a frame now.
+// toPaint reports whether this event is owed a frame now, and records the frame
+// when it is. It is the one place that decides, so the throttle clock is written
+// once per frame rather than once per caller.
 //
 // A phase is the one thing that is never held back. It is not a reading to be
 // rate-limited - it is the state the surface is in, and a "Connecting" left on
@@ -272,6 +274,7 @@ func (a *App) onEngineEvent(ev engine.Event) {
 // a second, and a human reads one of those.
 func (a *App) toPaint(phaseMoved bool, nowMs int64) bool {
 	if phaseMoved {
+		a.lastPaint.Store(nowMs)
 		return true
 	}
 	return a.dueToPaint(nowMs)
