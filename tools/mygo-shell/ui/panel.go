@@ -191,15 +191,20 @@ func (p *Panel) receivers(c *ui.Context, pal palette, st engine.Metrics) {
 // one that is playing. Only the playing receiver gets a Stop and a volume,
 // because those act on the session, and there is exactly one session.
 func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, playing bool) {
-	row := ui.Column(c).FillWidth().Padding(10, 9).Gap(8).Radius(0)
+	row := ui.Column(c).FillWidth().Padding(10, 9).Gap(8).Radius(radiusControl)
 	if playing {
 		// The playing row is the one block that steps out of the page, so the
-		// eye finds it without the accent spending itself on a fill.
-		row.Background(pal.Hover)
+		// eye finds it without the accent spending itself on a fill. It steps up
+		// onto the surface rather than sideways onto a hover tone: a hover is a
+		// few points from the ground and would leave the live row invisible.
+		row.Background(pal.Surface).Shadow(0, 1, 3, 0, pal.Shadow)
 	} else if !rec.Online {
 		// A receiver that stopped answering is still listed, because the user
-		// may want to see that it is the one that went, not have it vanish.
-		row.Background(pal.Surface)
+		// may want to see that it is the one that went, not have it vanish. It
+		// steps back into the fill rather than up onto the surface: a white row
+		// here would read as the selected one, which is the opposite of what an
+		// unreachable speaker should look like.
+		row.Background(pal.Fill)
 	}
 
 	row.Children(func() {

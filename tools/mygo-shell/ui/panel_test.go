@@ -749,3 +749,23 @@ func TestTheWindowAgreesWithThePanelAboutAnOfflineReceiver(t *testing.T) {
 		}
 	}
 }
+
+func TestTheOfflineRowStepsBackRatherThanForward(t *testing.T) {
+	// The panel has three states for a row: the live one steps up onto the
+	// surface, an unreachable one steps back into the fill, and the rest sit on
+	// the ground. A regression made the offline row use the surface colour,
+	// which is white: it read as the selected row, the opposite of what a
+	// speaker that stopped answering should look like.
+	pal := light()
+	if pal.Surface == pal.Fill {
+		t.Fatal("the surface and the fill are the same colour, so the two states cannot be told apart")
+	}
+	// And the ground must not be the fill either, or "stepped back" is invisible.
+	if pal.Ground == pal.Fill {
+		t.Error("the fill and the ground are the same colour, so an offline row would not read as stepped back")
+	}
+	// The playing row must differ from the ground by more than a hover would.
+	if pal.Surface == pal.Ground {
+		t.Error("the surface and the ground are the same colour, so a playing row would be invisible")
+	}
+}
