@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -611,5 +612,70 @@ func TestASuccessfulWriteClearsAnEarlierFailure(t *testing.T) {
 	}
 	if got := s.Current().Gain; got != 0.3 {
 		t.Errorf("gain = %v, want the later write to have been applied", got)
+	}
+}
+
+func TestAFailedWriteLeavesTheLastGoodFileIntact(t *testing.T) {
+	// Update writes with os.WriteFile, which truncates the file before writing.
+	// Anything that stops the write half way leaves a truncated JSON document,
+	// and Open cannot parse that - so every setting the user chose is gone on
+	// the next launch, with nothing said.
+	//
+	// The property that protects the user is not that a write always succeeds;
+	// it is that a write which fails leaves the previous, complete file readable.
+	// That is what writing to a temporary file and renaming it gives.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// A first write that works, and is read back.
+	s := Open(path)
+	s.Update(func(s *Settings) { s.LatencyMs = 500 })
+	if got := Open(path).Current().LatencyMs; got != 500 {
+		t.Fatalf("the first write did not reach the disk: %d", got)
+	}
+
+	// Now make the next write fail part way. A directory where the temporary
+	// file would go means the rename cannot happen; the point under test is what
+	// the settings file itself holds afterwards.
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.path = filepath.Join(dir, "sub", "settings.json")
+	s.Update(func(s *Settings) { s.LatencyMs = 120 })
+
+	// The real file - the one Open reads - must still hold the last good value.
+	if raw, err := os.ReadFile(path); err != nil {
+		t.Fatalf("the last good settings file is gone: %v", err)
+	} else {
+		var probe Settings
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("the last good settings file is no longer readable: %v", err)
+		}
+		if probe.LatencyMs != 500 {
+			t.Errorf("the last good file holds %d ms, want the 500 ms that was saved", probe.LatencyMs)
+		}
+	}
+}
+
+func TestAWriteRefusesToReplaceADirectoryWithAFile(t *testing.T) {
+	// The atomic write removes the old file before renaming onto it, because
+	// Windows will not rename onto an existing file. Removing whatever is there
+	// is not the same as removing a file: on a path that is a directory, the
+	// rename then succeeds and the directory is gone, replaced by the settings
+	// file. A user who had something at that path loses it, and nothing says so.
+	blocked := t.TempDir()
+	s := Open(blocked)
+	s.Update(func(s *Settings) { s.LatencyMs = 300 })
+
+	if s.WriteErr() == nil {
+		t.Error("a write over a directory reported success: the directory would be replaced")
+	}
+	st, err := os.Stat(blocked)
+	if err != nil {
+		t.Fatalf("the directory is gone: %v", err)
+	}
+	if !st.IsDir() {
+		t.Error("the directory was replaced by a file")
 	}
 }

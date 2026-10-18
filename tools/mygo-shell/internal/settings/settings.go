@@ -242,16 +242,64 @@ func (s *Store) Update(fn func(*Settings)) Settings {
 	// after it reached the disk.
 	var writeErr error
 	if b, err := json.MarshalIndent(cur, "", "  "); err == nil {
-		if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
-			writeErr = mkErr
-		} else if err := os.WriteFile(path, b, 0o644); err != nil {
-			writeErr = err
-		}
+		writeErr = writeAtomic(path, b)
 	}
 	s.mu.Lock()
 	s.writeErr = writeErr
 	s.mu.Unlock()
 	return cur
+}
+
+// writeAtomic writes the settings so that the file on disk is always a complete
+// document, or is the one that was there before.
+//
+// os.WriteFile truncates the file and then writes into it. Anything that stops
+// it half way - the machine losing power, the process being killed, a sync tool
+// taking the file - leaves a truncated JSON document. Open cannot parse that and
+// falls back to the defaults, so every setting the user chose is lost on the
+// next launch and nothing says why.
+//
+// So it is written beside the file and renamed over it. A rename within a
+// directory is atomic, so a reader sees either the whole old document or the
+// whole new one.
+func writeAtomic(path string, b []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".settings-*.json")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name) // no-op once the rename has succeeded
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o644); err != nil {
+		return err
+	}
+	// Removing the old file first is what a rename onto an existing file needs
+	// on Windows, but it must only ever remove a file. Removing whatever is
+	// there would delete a directory the user had put there and replace it with
+	// a file - turning a path that had something in it into one that does not.
+	if st, err := os.Lstat(path); err == nil && st.IsDir() {
+		return &os.PathError{Op: "write settings over", Path: path,
+			Err: errors.New("path is a directory")}
+	}
+	// Windows will not rename onto an existing file.
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(name, path)
 }
 
 // WriteErr is why the last change did not reach the disk, or nil when it did.
