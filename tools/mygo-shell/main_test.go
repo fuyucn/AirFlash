@@ -404,3 +404,67 @@ func TestQuitCanBeAskedForMoreThanOnce(t *testing.T) {
 	quit()
 	quit()
 }
+
+func TestStoppingIsClearedWhenANewSessionStarts(t *testing.T) {
+	// stopping is what makes a reconnect loop give up when the user asked it to.
+	// It was set by stopStream and never cleared, so after one Disconnect every
+	// later session started with the flag still set and aborted on its first
+	// check - which is a Play that does nothing the second time, and a "failed"
+	// that the user did not earn.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-stop-clear.json"),
+		state:    engine.NewState(),
+	}
+	app.stopping.Store(true)
+
+	// Starting a new session is a fresh intent: it clears the flag before the
+	// session goroutine can read it.
+	app.startStreamTo("receiver", []engine.Peer{{Host: "10.0.10.31", Port: 7000}})
+
+	if app.stopping.Load() {
+		t.Error("a new session started with stopping still set, so it would abort at once")
+	}
+}
+
+func TestASupersededSessionGivesUpEvenAfterAStopIsCleared(t *testing.T) {
+	// Clearing stopping on a new Play is right, and on its own it would let an
+	// older retry loop - still asleep in its backoff - wake to a flag that says
+	// "go" and race the new session. The generation is what the old loop
+	// compares against, so a stale one stands down.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-stop-gen.json"),
+		state:    engine.NewState(),
+	}
+	app.startStreamTo("first", []engine.Peer{{Host: "10.0.10.31", Port: 7000}})
+	first := app.sessionSeq.Load()
+
+	app.startStreamTo("second", []engine.Peer{{Host: "10.0.10.31", Port: 7000}})
+	second := app.sessionSeq.Load()
+
+	if second == first {
+		t.Fatal("starting a second session did not move the generation, so an old loop would not stand down")
+	}
+	if app.sessionSeq.Load() == first {
+		t.Error("the first session still reads as current")
+	}
+}
+
+func TestAStaleSessionStandsDownWhenANewerOneStarts(t *testing.T) {
+	// The guard runSession checks before each attempt, exercised on its own so
+	// the property is proved without waiting out a real backoff.
+	app := &App{settings: settings.Open("/tmp/airflash-stop-stale.json")}
+	gen := app.sessionSeq.Add(1)
+
+	if app.stopping.Load() || app.sessionSeq.Load() != gen {
+		t.Fatal("a freshly started session was treated as stale")
+	}
+	// A newer session is started while this one is still asleep.
+	app.sessionSeq.Add(1)
+	if app.sessionSeq.Load() == gen {
+		t.Fatal("the newer session did not move the generation")
+	}
+	// Which is exactly what makes the old loop stand down.
+	if !(app.stopping.Load() || app.sessionSeq.Load() != gen) {
+		t.Error("the old session still thinks it is current, so it would start a second engine")
+	}
+}

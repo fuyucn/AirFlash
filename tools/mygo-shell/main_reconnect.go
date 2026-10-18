@@ -34,16 +34,22 @@ type session struct {
 
 // runSession streams to one receiver, and retries it when it drops.
 //
+// gen is the session's generation: the loop gives up as soon as a newer session
+// has been started or the user has stopped, whichever came first. Comparing a
+// number rather than a boolean is what tells "the user stopped me" apart from
+// "the user stopped me and then started something else".
+//
 // It returns when the session ends for good: the user stopped it, the engine
 // died while reconnecting was off, or the attempts ran out.
-func (a *App) runSession(s session) {
+func (a *App) runSession(s session, gen uint64) {
 	cfg := a.settings.Current()
 	p := reconnect.Policy{Enabled: cfg.Reconnect, MaxAttempts: cfg.ReconnectAttempts}
 
 	for attempt := 0; ; attempt++ {
 		// The user may have pressed stop while a previous attempt was waiting
-		// out its backoff, in which case there is no session to start.
-		if a.stopping.Load() {
+		// out its backoff, or started a different session. Either way this loop
+		// is no longer the one that matters.
+		if a.stopping.Load() || a.sessionSeq.Load() != gen {
 			a.recordSession()
 			a.repaint()
 			return

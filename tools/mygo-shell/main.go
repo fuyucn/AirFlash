@@ -122,10 +122,20 @@ type App struct {
 	// to hosts, so the receiver those hosts belong to is the shell's own fact.
 	playing atomic.Pointer[string]
 
-	// stopping is set when the user asks for playback to end. It is what keeps a
-	// reconnect from bringing the session back after the user pressed stop:
-	// the loop waits between attempts, and without this it would wake and start
-	// an engine the user had just asked to be silent.
+	// sessionSeq numbers each playback session the user starts. A running
+	// session holds the number it was started with and gives up the moment it is
+	// no longer current, so a stop and a fresh start are told apart rather than
+	// both looking like "not stopping".
+	//
+	// A plain "stopping" flag could not do that. It was set by stop and never
+	// cleared, so every later Play aborted at once; and clearing it on a new
+	// Play would have let the old session's retry loop, still asleep in its
+	// backoff, wake to a flag that said "go" and race the new one.
+	sessionSeq atomic.Uint64
+
+	// stopping is set when the user asks for playback to end, and cleared when a
+	// new session is started. It is the quick answer; sessionSeq is what a
+	// session compares against to know whether it is still the one that matters.
 	stopping atomic.Bool
 
 	// restoreMu serialises the local-speaker restore. It runs off the UI thread,
@@ -1033,7 +1043,12 @@ func (a *App) startStreamTo(receiverID string, peers []engine.Peer) {
 	if len(peers) == 0 {
 		return
 	}
-	go a.runSession(session{peers: peers, receiverID: receiverID})
+	// A new session is a fresh intent, so the stop that ended the last one no
+	// longer applies, and the generation moves on so any older loop that is
+	// still asleep knows it is no longer the current one.
+	a.stopping.Store(false)
+	gen := a.sessionSeq.Add(1)
+	go a.runSession(session{peers: peers, receiverID: receiverID}, gen)
 }
 
 // connectToLast starts a session on the receiver the user last played to.
