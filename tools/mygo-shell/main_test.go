@@ -643,25 +643,39 @@ func TestBothSurfacesGetEveryDependencyTheyRead(t *testing.T) {
 	// used the field ran.
 	//
 	// This compares what each surface reads with what the app passes, from the
-	// source: a field added to Deps and used by a surface, but forgotten in one
-	// of the two literals, is exactly the bug this is for.
-	surfaces := []struct {
-		name string
-		file string
-	}{
-		{"panel", "ui/panel.go"},
-		{"window", "ui/shell.go"},
-	}
-	// panelDeps is a function; the window's literal sits in openWindow.
-	literals := map[string][2]string{
-		"panel":  {"func (a *App) panelDeps()", "\n}\n"},
-		"window": {"view := appui.New(appui.Deps{", "view.SetPage(page)"},
-	}
+	// source. Each literal is located by the function that holds it: the panel's
+	// deps are one function, the window's sit inside openWindow and run to the
+	// next one. Boundaries by function rather than by a byte marker keep the test
+	// independent of line endings, which is what broke it on Windows.
 	mainSrc, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	text := string(mainSrc)
 
+	// The section of main.go from a function's opening line to the next one.
+	from := func(open string) string {
+		i := strings.Index(text, open)
+		if i < 0 {
+			t.Fatalf("cannot find %q in main.go", open)
+		}
+		rest := text[i:]
+		if next := strings.Index(rest, "\nfunc "); next >= 0 {
+			return rest[:next]
+		}
+		return rest
+	}
+	panelBody := from("func (a *App) panelDeps()")
+	windowBody := from("func (a *App) openWindow(page string)")
+
+	surfaces := []struct {
+		name string
+		file string
+		body string
+	}{
+		{"panel", "ui/panel.go", panelBody},
+		{"window", "ui/shell.go", windowBody},
+	}
 	for _, s := range surfaces {
 		src, err := os.ReadFile(s.file)
 		if err != nil {
@@ -675,18 +689,8 @@ func TestBothSurfacesGetEveryDependencyTheyRead(t *testing.T) {
 			t.Fatalf("%s reads only %d fields; the scan is not reading it", s.name, len(read))
 		}
 
-		mark := literals[s.name]
-		open := strings.Index(string(mainSrc), mark[0])
-		if open < 0 {
-			t.Fatalf("cannot find the %s literal in main.go", s.name)
-		}
-		close := strings.Index(string(mainSrc)[open:], mark[1])
-		if close < 0 {
-			t.Fatalf("cannot find the end of the %s literal", s.name)
-		}
-		body := string(mainSrc)[open : open+close]
 		passed := map[string]bool{}
-		for _, m := range regexp.MustCompile(`(?m)^\t\t([A-Z][A-Za-z0-9]+):`).FindAllStringSubmatch(body, -1) {
+		for _, m := range regexp.MustCompile(`(?m)^\t\t([A-Z][A-Za-z0-9]+):`).FindAllStringSubmatch(s.body, -1) {
 			passed[m[1]] = true
 		}
 
@@ -697,6 +701,7 @@ func TestBothSurfacesGetEveryDependencyTheyRead(t *testing.T) {
 		}
 	}
 }
+
 func TestTheWindowDepsPassATranslator(t *testing.T) {
 	// The window's Deps were built without Words, so every string in it fell
 	// back to English while the tray panel, which does pass a translator, was
