@@ -769,3 +769,36 @@ func TestTheOfflineRowStepsBackRatherThanForward(t *testing.T) {
 		t.Error("the surface and the ground are the same colour, so a playing row would be invisible")
 	}
 }
+
+func TestNoEnglishLeaksIntoTheChineseInterface(t *testing.T) {
+	// The other translation test is a hand-kept list of keys, so it cannot see a
+	// string that was never passed through the translator at all: the latency
+	// line concatenated " · Auto, at your floor" as a literal and showed English
+	// on a Chinese page. This renders the page and looks for English prose
+	// instead, which is what a user would see.
+	cfg := settings.Open("/tmp/airflash-chinese-leak.json")
+	cfg.Update(func(s *settings.Settings) {
+		s.Language = string(i18n.Chinese)
+		s.LatencyAuto = true
+		s.LatencyMs = 500
+	})
+	view := New(Deps{
+		Words:    i18n.For(i18n.Chinese),
+		State:    streamingState(),
+		Settings: cfg,
+		Life:     shell.New(),
+	})
+	view.SetPage("settings")
+	tester := ui.NewTester(view.View, 880, 1180)
+
+	// Words that are only ever English prose in this interface. Identifiers such
+	// as "HomePod", "AirPlay" and "dB" are the same in both languages and are
+	// not in the list.
+	for _, english := range []string{"at your floor", "The engine will be asked", "Drops the window"} {
+		for _, text := range tester.Texts() {
+			if strings.Contains(text, english) {
+				t.Errorf("Chinese interface shows English %q in %q", english, text)
+			}
+		}
+	}
+}

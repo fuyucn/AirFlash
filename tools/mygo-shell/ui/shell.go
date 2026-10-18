@@ -781,7 +781,7 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 			if effective > cfg.LatencyMs {
 				line += fmt.Sprintf(s.t(" · Auto raised it from your floor of %d ms"), cfg.LatencyMs)
 			} else {
-				line += " · Auto, at your floor"
+				line += s.t(" · Auto, at your floor")
 			}
 		}
 		ui.Text(c, line).FontSize(sizeSmall).TextColor(p.InkMuted)
