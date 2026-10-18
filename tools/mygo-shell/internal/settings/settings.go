@@ -54,9 +54,6 @@ type Settings struct {
 	// because a chart is the most expensive thing the UI draws.
 	ShowTrend bool `json:"show_trend"`
 
-	// ReducedMotion stops the entrance animations.
-	ReducedMotion bool `json:"reduced_motion"`
-
 	// LastPeer is the receiver to auto-connect to.
 	LastPeer string `json:"last_peer"`
 
@@ -285,10 +282,10 @@ func (s Settings) normalized() Settings {
 	default:
 		s.SampleRate = 44100
 	}
-	// Lightweight implies no trend chart and no motion.
+	// Lightweight implies no trend chart: it is the most expensive thing the UI
+	// draws, and dropping it is most of what lightweight is for.
 	if s.Mode == ModeLightweight {
 		s.ShowTrend = false
-		s.ReducedMotion = true
 	}
 	if len(s.Equalizer.BandGainsDB) != len(equalizer.Frequencies) {
 		// A settings file from before the equalizer existed, or one written by a

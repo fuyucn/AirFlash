@@ -263,3 +263,48 @@ func TestRunningGoesFalseWhenTheEngineDies(t *testing.T) {
 		t.Error("Running still reports the engine alive after it ended")
 	}
 }
+
+func TestClosingStdinEndsTheEngine(t *testing.T) {
+	// The shell is going away, so there is nobody left to read the engine's
+	// events or write it commands. Closing its stdin is what asks it to exit:
+	// the stand-in reads commands until it sees EOF and then returns, as the
+	// real engine does.
+	//
+	// Without this the shell goes away and the engine stays behind, holding the
+	// audio device and looking like a second copy of the app in the task list.
+	c, _, _ := startFake(t)
+	if _, err := c.Hello(); err != nil {
+		t.Fatalf("hello: %v", err)
+	}
+	if !c.Running() {
+		t.Fatal("the engine is not running, so this proves nothing")
+	}
+
+	// What quit does to the engine.
+	_, _ = c.Stop()
+	if err := c.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	select {
+	case <-c.Wait():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the engine was still running after Close: it would outlive the shell")
+	}
+	if c.Running() {
+		t.Error("Running still reports true after the engine ended")
+	}
+}
+
+func TestACommandAfterCloseIsRefusedRatherThanWritten(t *testing.T) {
+	// A command written to a closed stdin is an error nobody sees, because
+	// there is no reader. Saying so is what lets the caller notice the engine is
+	// gone instead of believing a gain change landed.
+	c, _, _ := startFake(t)
+	if err := c.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if _, err := c.SetGain(0.5); err == nil {
+		t.Error("a command after Close was accepted, so a caller would think it was applied")
+	}
+}

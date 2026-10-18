@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -142,13 +141,11 @@ type Shell struct {
 	// cannot find. It is the window's for the same reason tuning is: a rebuild
 	// should not throw away what was being typed.
 	adding manualReceiver
-	// entered is when the window opened, for the entrance animation.
-	entered time.Time
 }
 
 // New builds the shell view.
 func New(d Deps) *Shell {
-	return &Shell{deps: d, entered: time.Now()}
+	return &Shell{deps: d}
 }
 
 // t translates one of the interface's strings.

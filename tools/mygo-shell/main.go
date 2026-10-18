@@ -66,6 +66,7 @@ func main() {
 		settings:       cfg,
 		life:           shell.New(),
 		state:          engine.NewState(),
+		quitting:       make(chan struct{}),
 	}
 
 	if *enginePath != "" {
@@ -126,6 +127,14 @@ type App struct {
 	// the rate the mode asks for.
 	lastPaint atomic.Int64
 
+	// quitting is closed when the app is going away, which is what the retry
+	// loop waits on so it does not sleep out its backoff - up to eight seconds -
+	// after the shell has already left, holding the engine it would start again.
+	// quitting is closed once, when the app is going away. It is closed rather
+	// than a flag read because the retry loop waits on it, and a channel is what
+	// wakes a select.
+	quitting chan struct{}
+
 	// discoveryCancel stops the mDNS browse. Discovery runs only while a window
 	// is open, so a closed window costs nothing on the network either.
 	discoveryCancel atomic.Pointer[context.CancelFunc]
@@ -158,6 +167,16 @@ func (a *App) run() {
 	// With no window the app stays resident, so the engine keeps playing.
 	// Nothing is quit here on purpose.
 	mygo.App.OnWindowAllClosed(func() {})
+
+	// The engine is a process this app started, so leaving is when it ends.
+	// Its stdin closing is what asks it to: the engine reads commands until it
+	// sees EOF and then exits. Without this the shell goes away and the engine
+	// stays behind, holding the audio device and looking like a second copy of
+	// the app in the task list.
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		a.stopEngine()
+		close(a.quitting)
+	})
 
 	// The tray is the app's permanent surface, and the panel it opens is the
 	// app's main surface: the user opens it to choose what to play to. The
@@ -1046,6 +1065,22 @@ func clampDB(db float64) float64 {
 		return -equalizer.LimitDB
 	}
 	return db
+}
+
+// stopEngine ends the engine process itself, rather than what it is playing.
+//
+// stopStream ends a session and leaves the engine reading commands; this closes
+// its stdin, which is what makes it exit. The shell is going away in the
+// ordinary case, so there is nobody left to read its events or write it
+// commands.
+func (a *App) stopEngine() {
+	// Set first: the reconnect loop waits between attempts, and an engine that
+	// is going away for good must not be brought back by a loop waking up.
+	a.stopping.Store(true)
+	if c := a.client.Swap(nil); c != nil {
+		_, _ = c.Stop()
+		_ = c.Close()
+	}
 }
 
 func (a *App) stopStream() {

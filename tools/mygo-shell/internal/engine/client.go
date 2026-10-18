@@ -194,7 +194,11 @@ func drain(r io.Reader) {
 func (c *Client) Send(command string, params any) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.cmd == nil || c.exited.Load() {
+	// stdin is nil once Close has been called: the engine has been asked to
+	// exit and nothing will read what is written to it. Saying so is what lets
+	// the caller notice the engine is gone, rather than believe a command it
+	// sent was applied.
+	if c.cmd == nil || c.stdin == nil || c.exited.Load() {
 		return "", ErrNotRunning
 	}
 	id := fmt.Sprintf("c%d", c.seq.Add(1))

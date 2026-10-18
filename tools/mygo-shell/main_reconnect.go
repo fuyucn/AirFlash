@@ -62,7 +62,12 @@ func (a *App) runSession(s session) {
 		// The engine ending is the one thing that does not arrive as an event,
 		// because then there is nobody left to send one.
 		<-client.Wait()
-		a.client.Store(nil)
+		// Take it out and let it go. The process has already ended - that is
+		// what Wait was waiting for - so closing its stdin is only tidiness;
+		// what matters is that the slot is freed rather than holding a client
+		// nobody will read from again.
+		a.client.CompareAndSwap(client, nil)
+		_ = client.Close()
 
 		// A stopped phase means the session was ended rather than lost: the
 		// engine says so, and only that, when it stops cleanly.
@@ -100,7 +105,17 @@ func (a *App) runSession(s session) {
 		// reports its own phases and has no idea a second attempt is coming.
 		a.state.SetReconnecting(d.Attempt, p.MaxAttempts)
 		a.repaint()
-		time.Sleep(d.After)
+		// Wait out the backoff, but not past the user asking to stop or the app
+		// going away: a plain sleep would hold the session goroutine - and with
+		// it the engine it is about to start again - for up to eight seconds
+		// after the shell had already left.
+		select {
+		case <-time.After(d.After):
+		case <-a.quitting:
+			a.recordSession()
+			a.repaint()
+			return
+		}
 	}
 }
 
@@ -120,7 +135,13 @@ func (a *App) startAttempt(s session) {
 		log.Printf("engine start failed: %v", err)
 		return
 	}
-	a.client.Store(client)
+	// One engine at a time. A client left in the slot from an attempt that
+	// ended without its loop noticing would keep its process alive, and the
+	// second engine would then be the one every command goes to.
+	if old := a.client.Swap(client); old != nil {
+		_, _ = old.Stop()
+		_ = old.Close()
+	}
 	_, _ = client.Hello()
 
 	cfg := a.settings.Current()

@@ -17,14 +17,10 @@ func TestLightweightDropsTheTrendAndMotion(t *testing.T) {
 	s := Default()
 	s.Mode = ModeLightweight
 	s.ShowTrend = true
-	s.ReducedMotion = false
 
 	got := s.normalized()
 	if got.ShowTrend {
 		t.Error("lightweight mode must not keep the trend chart")
-	}
-	if !got.ReducedMotion {
-		t.Error("lightweight mode must not keep the motion")
 	}
 }
 
