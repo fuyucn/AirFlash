@@ -20,7 +20,6 @@ package localsound
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -363,32 +362,17 @@ func muteEndpoint(id string) error {
 
 // restore returns every endpoint this silenced to what it was.
 func restore() error {
-	pending := takeForRestore()
-	return withCom(func() error {
-		var failures []string
-		for id, was := range pending {
-			if !was.read {
-				// Its state was never known, so restoring would be this app
-				// changing a setting the user made.
-				continue
-			}
-			vol, err := volumeOf(id)
-			if err != nil || vol == nil {
-				if err != nil {
-					failures = append(failures, fmt.Sprintf("%s: %v", id, err))
-				}
-				continue
-			}
-			err = setMute(vol, was.wasMuted)
-			release(vol)
-			if err != nil {
-				failures = append(failures, fmt.Sprintf("%s: %v", id, err))
-			}
+	return restoreRemembered(withCom, func(id string, was remembered) error {
+		vol, err := volumeOf(id)
+		if err != nil {
+			return err
 		}
-		if len(failures) > 0 {
-			return errors.New(strings.Join(failures, "; "))
+		if vol == nil {
+			// The device is gone, so there is nothing left to restore.
+			return nil
 		}
-		return nil
+		defer release(vol)
+		return setMute(vol, was.wasMuted)
 	})
 }
 

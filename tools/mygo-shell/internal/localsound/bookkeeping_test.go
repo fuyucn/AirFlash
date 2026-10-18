@@ -1,6 +1,7 @@
 package localsound
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -79,6 +80,50 @@ func TestTakingForRestoreClearsWhatWasTaken(t *testing.T) {
 	takeForRestore()
 	if again := takeForRestore(); len(again) != 0 {
 		t.Errorf("second take returned %d endpoints, want none: a restore must not repeat", len(again))
+	}
+}
+
+func TestAFailedApartmentKeepsWhatStillNeedsRestoring(t *testing.T) {
+	// Restore took the pending endpoints before joining COM. If the apartment
+	// could not be opened, nothing was restored and the list was already empty:
+	// the PC's speakers stayed muted and the app forgot it owed them a restore.
+	_ = Restore()
+	remember("speakers", remembered{wasMuted: false, read: true})
+
+	err := restoreRemembered(func(func() error) error {
+		return errors.New("COM apartment unavailable")
+	}, func(string, remembered) error {
+		t.Error("an endpoint was restored without a COM apartment")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("a failed apartment was reported as a successful restore")
+	}
+	pending := takeForRestore()
+	if _, ok := pending["speakers"]; !ok {
+		t.Error("the endpoint was forgotten before it could be restored")
+	}
+}
+
+func TestAnEndpointThatFailedToRestoreIsRetriedLater(t *testing.T) {
+	// A speaker can be busy or removed for a moment. Dropping it on that one
+	// failure leaves it muted for good, even though the next Restore could still
+	// put it back.
+	_ = Restore()
+	remember("speakers", remembered{wasMuted: false, read: true})
+
+	err := restoreRemembered(func(fn func() error) error {
+		return fn()
+	}, func(string, remembered) error {
+		return errors.New("the endpoint was busy")
+	})
+	if err == nil {
+		t.Fatal("a failed endpoint restore was reported as success")
+	}
+
+	pending := takeForRestore()
+	if _, ok := pending["speakers"]; !ok {
+		t.Error("a failed endpoint was dropped instead of kept for the next restore")
 	}
 }
 

@@ -8,6 +8,7 @@ package localsound
 // calls that only exist on Windows.
 
 import (
+	"errors"
 	"strings"
 	"sync"
 )
@@ -49,6 +50,52 @@ func takeForRestore() map[string]remembered {
 	pending := kept
 	kept = map[string]remembered{}
 	return pending
+}
+
+// putBack keeps endpoints that could not be restored, without replacing a
+// state a newer silence has already recorded.
+func putBack(pending map[string]remembered) {
+	mu.Lock()
+	defer mu.Unlock()
+	for id, was := range pending {
+		if _, already := kept[id]; !already {
+			kept[id] = was
+		}
+	}
+}
+
+// restoreRemembered runs one restore attempt with the platform's apartment
+// opener. A failed attempt keeps everything it took, so a later attempt can
+// still give the user their speakers back.
+func restoreRemembered(
+	join func(func() error) error,
+	restoreOne func(string, remembered) error,
+) error {
+	pending := takeForRestore()
+	var failures []string
+	failed := map[string]remembered{}
+
+	joinErr := join(func() error {
+		for id, was := range pending {
+			if !was.read {
+				continue
+			}
+			if err := restoreOne(id, was); err != nil {
+				failed[id] = was
+				failures = append(failures, id+": "+err.Error())
+			}
+		}
+		return nil
+	})
+	if joinErr != nil {
+		putBack(pending)
+		return joinErr
+	}
+	putBack(failed)
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 // guid is a Guid in the layout a COM signature takes.
