@@ -706,9 +706,10 @@ func (s *Shell) adapted() int {
 // controls are the two things that actually change playback.
 func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(20).Children(func() {
-		// Volume, as a labelled slider the width of the content.
+		// Volume, as a labelled slider the width of the content, on the same
+		// raised surface as the tables above and below it.
 		gain := cfg.Gain
-		ui.Column(c).Gap(6).Children(func() {
+		card(c, p, 6, func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				sectionLabel(s.deps.Words, c, p, "VOLUME")
 				ui.Text(c, fmt.Sprintf("%.0f%%", gain*100)).
