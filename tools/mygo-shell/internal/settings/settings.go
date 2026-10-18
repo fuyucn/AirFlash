@@ -602,11 +602,3 @@ func (s Settings) RedrawIntervalMs() int {
 	}
 	return 100
 }
-
-// SampleIntervalMs is how often the shell folds engine metrics into the model.
-func (s Settings) SampleIntervalMs() int {
-	if s.Mode == ModeLightweight {
-		return 1000
-	}
-	return 250
-}

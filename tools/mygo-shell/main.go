@@ -256,25 +256,25 @@ func (a *App) onEngineEvent(ev engine.Event) {
 
 	// The engine reports several times a second; the redraw rate is what the
 	// mode chose, so a burst of events costs one frame rather than one each.
-	// A phase that moved is the exception: it is the state the surface is in, so
-	// it paints now rather than waiting for the throttle to open. The rate is
-	// still the rate - a session crosses a few phases in its life, not four a
-	// second.
-	if before != after {
-		a.paint()
+	// Whether this event is owed a frame is what toPaint answers.
+	if !a.toPaint(before != after, time.Now().UnixMilli()) {
 		return
 	}
-	now := time.Now().UnixMilli()
-	if !a.dueToPaint(now) {
-		return
-	}
+	a.repaint()
+}
 
-	if w := a.win.Load(); w != nil {
-		w.Invalidate()
+// toPaint reports whether this event is owed a frame now.
+//
+// A phase is the one thing that is never held back. It is not a reading to be
+// rate-limited - it is the state the surface is in, and a "Connecting" left on
+// screen after the engine has moved on says the engine is doing something it has
+// stopped. Everything else waits for the interval: the engine reports four times
+// a second, and a human reads one of those.
+func (a *App) toPaint(phaseMoved bool, nowMs int64) bool {
+	if phaseMoved {
+		return true
 	}
-	if f := a.flyout.Load(); f != nil {
-		f.Invalidate()
-	}
+	return a.dueToPaint(nowMs)
 }
 
 // dueToPaint reports whether enough time has passed for another redraw, and
@@ -293,22 +293,6 @@ func (a *App) dueToPaint(nowMs int64) bool {
 	}
 	a.lastPaint.Store(nowMs)
 	return true
-}
-
-// paint asks the open surfaces to draw again, whatever the throttle allows.
-//
-// The throttle keeps a burst of readings from costing a frame each. A phase is
-// not another reading: the surface is either saying the right thing or it is
-// lying, and a "Connecting" left on screen after the engine has moved on is a
-// lie the user is left to interpret.
-func (a *App) paint() {
-	a.lastPaint.Store(0)
-	if w := a.win.Load(); w != nil {
-		w.Invalidate()
-	}
-	if f := a.flyout.Load(); f != nil {
-		f.Invalidate()
-	}
 }
 
 func (a *App) openWindow(page string) {
@@ -503,7 +487,7 @@ func (a *App) openWindow(page string) {
 		MinWidth:        720,
 		MinHeight:       520,
 		StateKey:        "window",
-		BackgroundColor: "light-dark(#FFFFFF, #0C0C0E)",
+		BackgroundColor: appui.GroundCSS(),
 		Content:         ui.View(view.View),
 	}
 	w := mygo.NewWindow(opts)

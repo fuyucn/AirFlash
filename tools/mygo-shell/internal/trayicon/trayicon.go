@@ -6,10 +6,11 @@
 // the app runs and there is nothing in the notification area to click. Drawing
 // it in Go means the binary carries it whatever the build did.
 //
-// The design follows the interface: grayscale, square corners, and a mark that
-// says what the app does. Three bars of rising height is a speaker's output
-// scale, and the highest one is filled to say audio is being sent - which is the
-// one thing this app exists to do.
+// The mark is drawn in ink on a filled field rather than as a transparent
+// outline: a tray icon sits on whatever colour the taskbar is, and an outline
+// disappears on one of them. Three bars of rising height are a speaker's output
+// scale, which is the one thing this app exists to do. The icon is deliberately
+// neutral - a tray glyph is a silhouette, not a place to carry a palette.
 package trayicon
 
 import (

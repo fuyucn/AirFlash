@@ -71,34 +71,49 @@ func TestAnEngineEventReachesTheModel(t *testing.T) {
 }
 
 // The throttle exists to rate-limit readings. A phase is not a reading: it is
-// the state the surface is in. When the throttle skipped one, the surface kept
-// saying "Connecting" for a session that had already begun - the frozen reading
-// the user reported.
-func TestAPhaseChangeIsNotHeldBackByTheThrottle(t *testing.T) {
-	app := &App{
-		settings: settings.Open("/tmp/airflash-paint-phase.json"),
-		state:    engine.NewState(),
-	}
+// the state the surface is in. While the throttle was filtering phases too, a
+// phase that arrived inside the interval was dropped and the surface went on
+// saying the previous one - the "Connecting" that never resolved, and the
+// reading that stopped moving.
+func TestAPhaseIsNeverHeldBackByTheThrottle(t *testing.T) {
+	app := &App{settings: settings.Open("/tmp/airflash-paint-phase.json")}
 	if !app.dueToPaint(1000) {
 		t.Fatal("the first event was refused, so there is nothing to throttle against")
 	}
 
-	// A phase that moves while the throttle is still closed must be painted at
-	// once rather than dropped, so the surface cannot keep saying the old state.
+	// A reading 10 ms later is inside the interval, so it waits. This is the
+	// throttle doing its job, and the test fails if it stops.
+	if app.toPaint(false, 1010) {
+		t.Error("a reading 10 ms after the last paint was owed a frame: the throttle is not rate-limiting")
+	}
+	// But the very same event, if it moved the phase, is owed one at once.
+	if !app.toPaint(true, 1010) {
+		t.Error("a phase 10 ms after the last paint was held back, so the surface would keep saying the old state")
+	}
+}
+
+// The laser must be green for a phase to be seen at all: an event that reaches
+// the model but paints nothing leaves the reading where it was.
+func TestAPhaseEventReachesTheSurface(t *testing.T) {
+	app := &App{
+		settings: settings.Open("/tmp/airflash-paint-surface.json"),
+		state:    engine.NewState(),
+	}
 	app.onEngineEvent(engine.Event{Event: "streaming", Raw: []byte(
 		`{"event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"c","members":1}`)})
 
 	if got := app.state.Snapshot().Phase; got != engine.PhaseStreaming {
 		t.Fatalf("phase = %q, want the event applied", got)
 	}
-	if got := app.lastPaint.Load(); got != 0 {
-		t.Errorf("lastPaint = %d, want it cleared so the phase paint went out now", got)
+	// The paint that went out is recorded, which is what stops the reading that
+	// follows the phase from being a second frame for the same phase.
+	if app.lastPaint.Load() == 0 {
+		t.Error("the phase paint was not recorded, so the next reading would paint again at once")
 	}
 }
 
-// A reading whose frame was throttled away must still reach the model. The
-// throttle drops frames, never data: what the engine said is folded in whether
-// or not a paint followed it.
+// A reading whose frame was throttled away must still reach the model: the
+// throttle drops frames, never data.
 func TestAThrottledReadingStillReachesTheModel(t *testing.T) {
 	app := &App{
 		settings: settings.Open("/tmp/airflash-paint-model2.json"),
@@ -106,16 +121,11 @@ func TestAThrottledReadingStillReachesTheModel(t *testing.T) {
 	}
 	app.onEngineEvent(engine.Event{Event: "streaming", Raw: []byte(
 		`{"event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"c","members":1}`)})
-
 	app.onEngineEvent(engine.Event{Event: "capture_metrics", Raw: []byte(
 		`{"event":"capture_metrics","metrics":{"input_rate":48000}}`)})
 
-	st := app.state.Snapshot()
-	if st.Capture.InputRate != 48000 {
-		t.Errorf("input rate = %d, want the throttled reading to have been folded in", st.Capture.InputRate)
-	}
-	if got := app.lastPaint.Load(); got == 0 {
-		t.Error("a reading cleared the throttle, which would let every event paint")
+	if got := app.state.Snapshot().Capture.InputRate; got != 48000 {
+		t.Errorf("input rate = %d, want the throttled reading folded in", got)
 	}
 }
 

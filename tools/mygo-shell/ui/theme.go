@@ -122,6 +122,30 @@ func forDark(isDark bool) palette {
 	return light()
 }
 
+// GroundCSS is the window's own background, as the CSS colour the window
+// options take: the light colour and the dark one, so the platform picks.
+//
+// It comes from the palette rather than being written out again. A window whose
+// background does not match the page drawn inside it shows the difference at its
+// edges - which is how a change to the palette leaves the window looking like two
+// surfaces that do not quite meet.
+func GroundCSS() string {
+	return "light-dark(" + cssOf(light().Ground) + ", " + cssOf(dark().Ground) + ")"
+}
+
+// cssOf renders one colour the way the window options read it.
+func cssOf(c ui.Color) string {
+	const hex = "0123456789ABCDEF"
+	b := []byte{'#', 0, 0, 0, 0, 0, 0}
+	b[1] = hex[c.R>>4]
+	b[2] = hex[c.R&0xF]
+	b[3] = hex[c.G>>4]
+	b[4] = hex[c.G&0xF]
+	b[5] = hex[c.B>>4]
+	b[6] = hex[c.B&0xF]
+	return string(b)
+}
+
 // themeFor turns the palette into the framework's theme, so the widgets the
 // framework draws - sliders, switches, segmented controls, focus rings - use
 // the same colours and the same rounding as the rest of the window. Without

@@ -24,15 +24,11 @@ func TestLightweightDropsTheTrendAndMotion(t *testing.T) {
 	}
 }
 
-func TestLightweightSamplesLessOftenThanStandard(t *testing.T) {
+func TestLightweightRedrawsLessOftenThanStandard(t *testing.T) {
 	standard := Default()
 	light := Default()
 	light.Mode = ModeLightweight
 
-	if light.SampleIntervalMs() <= standard.SampleIntervalMs() {
-		t.Errorf("lightweight samples every %d ms, standard every %d ms; lightweight must be less often",
-			light.SampleIntervalMs(), standard.SampleIntervalMs())
-	}
 	if light.RedrawIntervalMs() <= standard.RedrawIntervalMs() {
 		t.Errorf("lightweight redraws every %d ms, standard every %d ms; lightweight must be less often",
 			light.RedrawIntervalMs(), standard.RedrawIntervalMs())
