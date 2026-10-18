@@ -14,6 +14,7 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/reconnect"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
@@ -728,5 +729,54 @@ func TestTheWindowDepsPassATranslator(t *testing.T) {
 	body := text[open : open+close]
 	if !strings.Contains(body, "Words:") {
 		t.Error("the window's dependencies have no translator, so the window is drawn in English")
+	}
+}
+
+func TestAnAttemptThatCouldNotStartIsNotLeftConnecting(t *testing.T) {
+	// startAttempt returns without starting anything when the engine binary is
+	// missing or cannot be launched. runSession then finds no client and returns
+	// - without recording the session, without setting a phase, and without a
+	// word to the user. The surface keeps whatever it showed before, which is
+	// the "connecting" it was put in: a connection that is not being attempted,
+	// and never will be, because the loop has already given up.
+	app := &App{
+		settings:   settings.Open("/tmp/airflash-attempt-start.json"),
+		state:      engine.NewState(),
+		enginePath: "",
+	}
+	app.state.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
+
+	app.startAttempt(session{peers: []engine.Peer{{Host: "10.0.10.31", Port: 7000}}})
+
+	if got := app.state.Snapshot().Phase; got == engine.PhaseConnecting {
+		t.Error("an attempt that could not start left the surface saying connecting")
+	}
+	if got := app.state.LastError(); got == "" {
+		t.Error("the failure was not recorded, so nothing on screen says why")
+	}
+}
+
+func TestAFailedStartIsRetriedWhenReconnectIsOn(t *testing.T) {
+	// runSession returned the moment it found no client, so an attempt that
+	// could not start an engine was never retried - even with reconnecting on
+	// and attempts left. A start that lost a race with a closing process is
+	// exactly the case a retry fixes.
+	//
+	// The policy decides, so this asserts the decision the loop now makes
+	// rather than running the loop: a failed start is a retryable failure with
+	// no elapsed time.
+	p := reconnect.Policy{Enabled: true, MaxAttempts: 3}
+	d := reconnect.Decide(p, 0, 0, reconnect.ReasonRetryable)
+	if !d.Retry {
+		t.Fatal("a failed start with reconnect on was not retried")
+	}
+	if d.Attempt != 1 {
+		t.Errorf("attempt = %d, want the first", d.Attempt)
+	}
+
+	// And with reconnect off it is final, as any other failure is.
+	off := reconnect.Policy{Enabled: false, MaxAttempts: 3}
+	if reconnect.Decide(off, 0, 0, reconnect.ReasonRetryable).Retry {
+		t.Error("a failed start was retried with reconnect off")
 	}
 }

@@ -63,7 +63,27 @@ func (a *App) runSession(s session, gen uint64) {
 
 		client := a.client.Load()
 		if client == nil {
-			return
+			// The attempt never got an engine, so there is nothing to wait on.
+			// It is still a failure the policy may want to retry - a missing
+			// binary will fail again, but a start that lost a race with a
+			// closing process may not - so it goes through the same decision as
+			// a session that dropped.
+			d := reconnect.Decide(p, attempt, 0, reconnect.ReasonRetryable)
+			if !d.Retry {
+				a.recordSession()
+				a.repaint()
+				return
+			}
+			a.state.SetReconnecting(d.Attempt, p.MaxAttempts)
+			a.repaint()
+			select {
+			case <-time.After(d.After):
+			case <-a.quitting:
+				a.recordSession()
+				a.repaint()
+				return
+			}
+			continue
 		}
 		// The engine ending is the one thing that does not arrive as an event,
 		// because then there is nobody left to send one.
@@ -131,14 +151,28 @@ func (a *App) runSession(s session, gen uint64) {
 // when it ends, whatever the reason, the process is gone and the next attempt
 // starts a new one. That is what makes an ended session and a dead engine
 // indistinguishable from in here, which is why the caller checks the phase.
+// failAttempt records an attempt that never got as far as an engine.
+//
+// runSession returns when there is no client to wait on, so nothing else will
+// report a phase for this attempt. Without this the surface keeps the
+// "connecting" it was put in - a connection that is not being made and never
+// will be, because the loop has already given up.
+func (a *App) failAttempt(message string) {
+	a.state.Apply(engine.Event{Event: "error", Raw: []byte(
+		`{"event":"error","message":"` + message + `"}`)})
+	a.repaint()
+}
+
 func (a *App) startAttempt(s session) {
 	if a.enginePath == "" {
 		log.Printf("no engine path configured")
+		a.failAttempt("the audio engine was not found")
 		return
 	}
 	client, err := engine.Start(a.enginePath, a.onEngineEvent)
 	if err != nil {
 		log.Printf("engine start failed: %v", err)
+		a.failAttempt("the audio engine could not be started")
 		return
 	}
 	// One engine at a time. A client left in the slot from an attempt that
