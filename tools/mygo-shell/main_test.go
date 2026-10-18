@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -634,26 +635,68 @@ func TestTheTrayMenuIsDrawnInTheChosenLanguage(t *testing.T) {
 	}
 }
 
-func TestThePanelGetsEveryDependencyItReads(t *testing.T) {
+func TestBothSurfacesGetEveryDependencyTheyRead(t *testing.T) {
 	// The panel read PlayingReceiver and the app did not pass it, so the call was
 	// on a nil func: a panic the first time the panel opened with a receiver in
-	// the list. Checking only that one field would miss the next omission, so
-	// this compares every field the panel reads against every field the app
-	// passes - read from the source, because the wiring is a literal.
-	app := &App{settings: settings.Open("/tmp/airflash-panel-deps.json"), state: engine.NewState()}
-	d := app.panelDeps()
-
-	// The fields that must be set for the panel to draw at all.
-	if d.State == nil || d.Settings == nil || d.Receivers == nil {
-		t.Fatal("the panel is missing one of its required fields")
+	// the list. The window read Words and the app did not pass it, so the whole
+	// window fell back to English. Both were invisible until the branch that
+	// used the field ran.
+	//
+	// This compares what each surface reads with what the app passes, from the
+	// source: a field added to Deps and used by a surface, but forgotten in one
+	// of the two literals, is exactly the bug this is for.
+	surfaces := []struct {
+		name string
+		file string
+	}{
+		{"panel", "ui/panel.go"},
+		{"window", "ui/shell.go"},
 	}
-	// And the ones that are optional in type but read unconditionally by a
-	// branch: a nil here is a panic, not an empty answer.
-	if d.PlayingReceiver == nil {
-		t.Error("the panel was given no PlayingReceiver, so its receiver list panics")
+	// panelDeps is a function; the window's literal sits in openWindow.
+	literals := map[string][2]string{
+		"panel":  {"func (a *App) panelDeps()", "\n}\n"},
+		"window": {"view := appui.New(appui.Deps{", "view.SetPage(page)"},
+	}
+	mainSrc, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, s := range surfaces {
+		src, err := os.ReadFile(s.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		read := map[string]bool{}
+		for _, m := range regexp.MustCompile(`deps\.([A-Z][A-Za-z0-9]+)`).FindAllStringSubmatch(string(src), -1) {
+			read[m[1]] = true
+		}
+		if len(read) < 8 {
+			t.Fatalf("%s reads only %d fields; the scan is not reading it", s.name, len(read))
+		}
+
+		mark := literals[s.name]
+		open := strings.Index(string(mainSrc), mark[0])
+		if open < 0 {
+			t.Fatalf("cannot find the %s literal in main.go", s.name)
+		}
+		close := strings.Index(string(mainSrc)[open:], mark[1])
+		if close < 0 {
+			t.Fatalf("cannot find the end of the %s literal", s.name)
+		}
+		body := string(mainSrc)[open : open+close]
+		passed := map[string]bool{}
+		for _, m := range regexp.MustCompile(`(?m)^\t\t([A-Z][A-Za-z0-9]+):`).FindAllStringSubmatch(body, -1) {
+			passed[m[1]] = true
+		}
+
+		for field := range read {
+			if !passed[field] {
+				t.Errorf("%s reads deps.%s but main.go does not pass it", s.name, field)
+			}
+		}
 	}
 }
-
 func TestTheWindowDepsPassATranslator(t *testing.T) {
 	// The window's Deps were built without Words, so every string in it fell
 	// back to English while the tray panel, which does pass a translator, was
