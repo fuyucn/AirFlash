@@ -42,6 +42,10 @@ func main() {
 	var (
 		enginePath = flag.String("engine", "", "path to the airflash-engine executable")
 		probeJSON  = flag.String("probe", "", "write a start-up report as JSON and exit")
+		// quitCheck runs the quit path and exits, which is what CI can prove
+		// without a display: the engine ended, nothing left running, no panic on
+		// a quit asked for twice.
+		quitCheck = flag.Bool("quitcheck", false, "run the quit path and exit")
 		// startedByLogin is set by the startup entry this app writes. It is what
 		// separates a launch at login from one by hand: the first stays quiet and
 		// connects to the last receiver, the second opens the panel.
@@ -79,6 +83,15 @@ func main() {
 	// describe itself without a display.
 	if *probeJSON != "" {
 		app.writeProbe(*probeJSON)
+		return
+	}
+
+	// The quit path is where the engine is ended and the retry loop is woken.
+	// It is the one path with no display and no window, and it is the one that
+	// crashed at startup in build 71: closing a channel that a second quit had
+	// already closed. A report can only prove it ran without panicking.
+	if *quitCheck {
+		app.checkQuit()
 		return
 	}
 
@@ -130,10 +143,12 @@ type App struct {
 	// quitting is closed when the app is going away, which is what the retry
 	// loop waits on so it does not sleep out its backoff - up to eight seconds -
 	// after the shell has already left, holding the engine it would start again.
-	// quitting is closed once, when the app is going away. It is closed rather
-	// than a flag read because the retry loop waits on it, and a channel is what
-	// wakes a select.
-	quitting chan struct{}
+	//
+	// The once is not decoration: a quit can be asked for more than once - the
+	// user choosing Quit, and then the machine shutting down on its way out -
+	// and closing a channel that is already closed panics.
+	quitting     chan struct{}
+	quittingOnce sync.Once
 
 	// discoveryCancel stops the mDNS browse. Discovery runs only while a window
 	// is open, so a closed window costs nothing on the network either.
@@ -173,10 +188,8 @@ func (a *App) run() {
 	// sees EOF and then exits. Without this the shell goes away and the engine
 	// stays behind, holding the audio device and looking like a second copy of
 	// the app in the task list.
-	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
-		a.stopEngine()
-		close(a.quitting)
-	})
+	a.onQuit()
+	a.onQuit()
 
 	// The tray is the app's permanent surface, and the panel it opens is the
 	// app's main surface: the user opens it to choose what to play to. The
@@ -1065,6 +1078,46 @@ func clampDB(db float64) float64 {
 		return -equalizer.LimitDB
 	}
 	return db
+}
+
+// checkQuit runs the quit path once and exits.
+//
+// It registers the quit listeners run registers and then asks for a quit twice,
+// because a quit can arrive more than once: the user choosing Quit, and then the
+// machine shutting down on its way out. The second one is the case that
+// crashed, and it is the case nothing had exercised - the probe returns before
+// any listener is registered.
+func (a *App) checkQuit() {
+	a.onQuit()
+	// Leaving twice, which is the case that crashed: the user choosing Quit, and
+	// then the machine shutting down on its way out. The listeners are run
+	// directly rather than through App.Quit, because that queues on the main
+	// loop and the second ask would arrive after the loop had already ended.
+	a.leave()
+	a.leave()
+}
+
+// leave is what a quit listener does, so it can be run more than once without a
+// display or a window.
+func (a *App) leave() {
+	a.stopEngine()
+	a.quittingOnce.Do(func() { close(a.quitting) })
+	if a.quitting != nil {
+		select {
+		case <-a.quitting:
+		default:
+			panic("leaving did not close the quit channel")
+		}
+	}
+}
+
+// onQuit registers what leaving the app does, in one place, so the check and
+// the app run the same listeners rather than two copies that can drift.
+func (a *App) onQuit() {
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		a.stopEngine()
+		a.quittingOnce.Do(func() { close(a.quitting) })
+	})
 }
 
 // stopEngine ends the engine process itself, rather than what it is playing.

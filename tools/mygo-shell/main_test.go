@@ -318,3 +318,30 @@ func TestTheTrayMenuIsTakenOffTheIconAgain(t *testing.T) {
 		t.Errorf("the menu was left on the icon, so the backend shows it again: %v", tray.calls)
 	}
 }
+
+func TestQuitCanBeAskedForMoreThanOnce(t *testing.T) {
+	// Build 71 crashed at startup's quit path: the channel closing on a second
+	// quit panicked, and a quit can happen more than once - the user choosing
+	// Quit, and then the machine shutting down on its way out. The probe the
+	// workflow runs returns before this is registered, so nothing caught it.
+	app := &App{quitting: make(chan struct{})}
+
+	quit := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("a second quit panicked: %v", r)
+			}
+		}()
+		app.quittingOnce.Do(func() { close(app.quitting) })
+	}
+	quit()
+	// The channel is closed, which is what the retry loop is waiting on.
+	select {
+	case <-app.quitting:
+	default:
+		t.Fatal("quitting was not closed, so the retry loop would sleep on")
+	}
+	// And a second ask does not panic.
+	quit()
+	quit()
+}

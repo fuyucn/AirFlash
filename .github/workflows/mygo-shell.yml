@@ -103,6 +103,19 @@ jobs:
           if ($stray) { throw "an engine was left beside the shell: $($stray.Name)" }
           "engine bundled: $($probe.engine_bytes) bytes"
 
+      - name: The quit path, which the probe never reaches
+        shell: pwsh
+        run: |
+          # The probe returns before the app registers anything, so the quit
+          # path had nothing covering it - and that is where build 71 crashed:
+          # closing a channel a second quit had already closed. Leaving twice is
+          # the case, so this asks for it twice and fails on a panic.
+          $p = Start-Process -FilePath 'artifacts/shell/AirFlash.exe' `
+            -ArgumentList @('-quitcheck') -PassThru -WindowStyle Hidden
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'quitcheck timed out' }
+          if ($p.ExitCode -ne 0) { throw "quitcheck exited $($p.ExitCode)" }
+          "quit path clean"
+
       - uses: actions/upload-artifact@v4
         with:
           name: airflash-shell-win-x64
@@ -142,6 +155,12 @@ jobs:
         run: |
           xvfb-run -a artifacts/shell/airflash-shell -probe "$PWD/artifacts/shell/probe-linux.json"
           cat artifacts/shell/probe-linux.json
+
+      - name: The quit path, which the probe never reaches
+        run: |
+          # The same case that crashed on Windows in build 71: a quit asked for
+          # twice closing a channel that is already closed.
+          xvfb-run -a artifacts/shell/airflash-shell -quitcheck
 
       - name: Package
         run: |
