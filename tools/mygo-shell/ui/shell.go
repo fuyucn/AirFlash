@@ -1614,6 +1614,25 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 			}
 		})
 
+		// The language. System follows the machine, which is what most people
+		// want; the other two are there for a machine set to one language and a
+		// user who reads another.
+		card(c, p, 8, func() {
+			sectionLabel(s.deps.Words, c, p, "LANGUAGE")
+			langs := []string{string(i18n.System), string(i18n.English), string(i18n.Chinese)}
+			labels := []string{s.t("System"), "English", "中文"}
+			index := 0
+			for i, l := range langs {
+				if l == cfg.Language {
+					index = i
+				}
+			}
+			seg := ui.Segmented(c, &index, labels...).Label(s.t("LANGUAGE"))
+			if seg.Changed() && s.deps.OnLanguage != nil && langs[index] != cfg.Language {
+				s.deps.OnLanguage(langs[index])
+			}
+		})
+
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Text(c, s.t("Closing the window")).FontSize(sizeBody).TextColor(p.Ink)
 			ui.Text(c, s.t("Closing releases the window and everything it holds. Playback continues: "+

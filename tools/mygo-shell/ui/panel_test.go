@@ -1064,3 +1064,38 @@ func TestThePanelDrawsEveryStateWithoutPanicking(t *testing.T) {
 		}
 	}
 }
+
+func TestTheLanguageCanBeChangedFromTheSettingsPage(t *testing.T) {
+	// The setting existed, the app wired OnLanguage, and the window rebuilt
+	// itself on the change - but no control ever called it. The only way to
+	// change the language was to edit the settings file, which is also why the
+	// missing translator in the window went unnoticed for so long.
+	cfg := settings.Open("/tmp/airflash-language.json")
+	cfg.Update(func(s *settings.Settings) { s.Language = string(i18n.English) })
+	var got string
+	view := New(Deps{
+		Words:    i18n.For(i18n.English),
+		State:    engine.NewState(),
+		Settings: cfg,
+		Life:     shell.New(),
+		OnLanguage: func(lang string) {
+			got = lang
+			cfg.Update(func(s *settings.Settings) { s.Language = lang })
+		},
+	})
+	view.SetPage("settings")
+	tester := ui.NewTester(view.View, 880, 1400)
+
+	if !tester.HasText("LANGUAGE") {
+		t.Fatal("the settings page has no language control")
+	}
+	if err := tester.Click("中文"); err != nil {
+		t.Fatalf("clicking 中文: %v", err)
+	}
+	if got != string(i18n.Chinese) {
+		t.Errorf("the click reported %q, want %q", got, i18n.Chinese)
+	}
+	if cfg.Current().Language != string(i18n.Chinese) {
+		t.Errorf("the setting is %q, want it stored", cfg.Current().Language)
+	}
+}
