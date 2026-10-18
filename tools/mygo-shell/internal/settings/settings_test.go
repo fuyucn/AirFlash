@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestDefaultsTargetFiveHundredMilliseconds(t *testing.T) {
@@ -787,5 +788,38 @@ func TestEveryReferenceFieldIsCloned(t *testing.T) {
 	}
 	if checked < 4 {
 		t.Fatalf("checked only %d reference fields; the walk is not reading the struct", checked)
+	}
+}
+
+func TestAPanickingCallbackDoesNotLockTheStoreForever(t *testing.T) {
+	// Update releases its lock with an explicit Unlock rather than a defer, so
+	// a callback that panics - a setting the shell cannot handle, a nil map
+	// write - leaves the store locked for good. Every read and every later write
+	// then blocks, and the app is dead: nothing can be changed and nothing can be
+	// read, with no error to show for it.
+	s := Open(filepath.Join(t.TempDir(), "settings.json"))
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Logf("the panic reached the caller: %v", r)
+			}
+		}()
+		s.Update(func(*Settings) { panic("this callback cannot finish") })
+	}()
+
+	// The store must still be usable.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Update(func(cur *Settings) { cur.Gain = 0.5 })
+	}()
+	select {
+	case <-done:
+		if got := s.Current().Gain; got != 0.5 {
+			t.Errorf("gain = %v, want the later write to have landed", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the store is locked forever after a panicking callback")
 	}
 }

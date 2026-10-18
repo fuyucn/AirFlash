@@ -247,18 +247,30 @@ func (s Settings) clone() Settings {
 
 // Update changes the settings and writes them.
 func (s *Store) Update(fn func(*Settings)) Settings {
-	s.mu.Lock()
-	fn(&s.cur)
-	s.cur = s.cur.normalized()
-	cur := s.cur
-	path := s.path
-	s.mu.Unlock()
+	// The lock is released by a defer, not by a statement after the callback. A
+	// callback that panics - a setting the shell cannot handle - would otherwise
+	// unwind past the release and leave the store locked for good: every read
+	// and every later write would block, and the app would be dead with nothing
+	// to report.
+	//
+	// The write itself is outside that lock, so a slow disk does not block the
+	// rest of the app from reading the settings it has already accepted.
+	var cur Settings
+	var path string
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		fn(&s.cur)
+		s.cur = s.cur.normalized()
+		cur = s.cur.clone()
+		path = s.path
+	}()
 
 	// The error describes the last write, not the worst one that ever happened.
-	// It is set here on every write, including to nil: a store that failed once
-	// - a full disk, a settings file a sync tool held open - would otherwise
-	// keep a red warning on the settings page forever, even though every change
-	// after it reached the disk.
+	// It is set on every write, including to nil: a store that failed once - a
+	// full disk, a settings file a sync tool held open - would otherwise keep a
+	// red warning on the settings page forever, even though every change after
+	// it reached the disk.
 	var writeErr error
 	if b, err := json.MarshalIndent(cur, "", "  "); err == nil {
 		writeErr = writeAtomic(path, b)
