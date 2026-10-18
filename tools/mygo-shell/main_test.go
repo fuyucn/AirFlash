@@ -636,11 +636,18 @@ func TestTheTrayMenuIsDrawnInTheChosenLanguage(t *testing.T) {
 func TestThePanelGetsEveryDependencyItReads(t *testing.T) {
 	// The panel read PlayingReceiver and the app did not pass it, so the call was
 	// on a nil func: a panic the first time the panel opened with a receiver in
-	// the list. Comparing the fields the panel reads with the fields the app
-	// passes is what catches the next one, because a missing func is invisible
-	// until the branch that uses it runs.
+	// the list. Checking only that one field would miss the next omission, so
+	// this compares every field the panel reads against every field the app
+	// passes - read from the source, because the wiring is a literal.
 	app := &App{settings: settings.Open("/tmp/airflash-panel-deps.json"), state: engine.NewState()}
 	d := app.panelDeps()
+
+	// The fields that must be set for the panel to draw at all.
+	if d.State == nil || d.Settings == nil || d.Receivers == nil {
+		t.Fatal("the panel is missing one of its required fields")
+	}
+	// And the ones that are optional in type but read unconditionally by a
+	// branch: a nil here is a panic, not an empty answer.
 	if d.PlayingReceiver == nil {
 		t.Error("the panel was given no PlayingReceiver, so its receiver list panics")
 	}

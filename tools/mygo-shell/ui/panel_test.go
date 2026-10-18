@@ -1004,3 +1004,63 @@ func TestThePanelWithoutAPlayingReceiverLookupDoesNotPanic(t *testing.T) {
 	}()
 	ui.NewTester(panel.View, panelWidth, 600).Frame()
 }
+
+func TestThePanelDrawsEveryStateWithoutPanicking(t *testing.T) {
+	// The panel is the surface a user sees almost every time, and its branches
+	// depend on the engine phase, the receiver list, and whether a session is
+	// playing. A nil or missing dependency in any one of them is a crash on a
+	// surface that is opened by a tray click. This walks the states.
+	rec := receiver("AA", "Living Room", "10.0.10.31")
+	offline := rec
+	offline.Online = false
+
+	phases := map[string]func() *engine.State{
+		"idle":      engine.NewState,
+		"streaming": streamingState,
+		"pairing":   pairingState,
+		"connecting": func() *engine.State {
+			st := engine.NewState()
+			st.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
+			return st
+		},
+		"failed": func() *engine.State {
+			st := engine.NewState()
+			st.Apply(engine.Event{Event: "error", Raw: []byte(`{"event":"error","message":"x"}`)})
+			return st
+		},
+		"reconnecting": func() *engine.State {
+			st := engine.NewState()
+			st.SetReconnecting(2, 5)
+			return st
+		},
+	}
+	lists := map[string][]discovery.Receiver{
+		"none":    nil,
+		"one":     {rec},
+		"offline": {offline},
+		"both":    {rec, offline},
+	}
+
+	for phaseName, phase := range phases {
+		for listName, list := range lists {
+			st := phase()
+			playingID := ""
+			if phaseName == "streaming" && len(list) > 0 {
+				playingID = list[0].ID
+			}
+			panel := NewPanel(panelDeps(st, list, playingID))
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s with %s receivers panicked: %v", phaseName, listName, r)
+					}
+				}()
+				ui.NewTester(panel.View, panelWidth, 700).Frame()
+				// And the measured height must not be a placeholder.
+				if h := panel.Height(); h <= 0 {
+					t.Errorf("%s with %s receivers measured %d high", phaseName, listName, h)
+				}
+			}()
+		}
+	}
+}
