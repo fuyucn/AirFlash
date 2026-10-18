@@ -392,12 +392,13 @@ func (s *State) Apply(ev Event) {
 		s.metrics.Pairing = true
 		s.metrics.Phase = PhasePairing
 		s.metrics.Detail = ""
-	case "paired":
+	case "paired", "negotiated", "handshake_complete":
+		// Paired and the steps after it all mean the same thing to the interface:
+		// a PIN, if one was being waited for, is no longer, and the engine is
+		// still working through the connection. Written once rather than three
+		// times.
 		s.metrics.Pairing = false
 		s.metrics.PairingOn = ""
-		s.metrics.Phase = PhaseNegotiating
-	case "negotiated", "handshake_complete":
-		s.metrics.Pairing = false
 		s.metrics.Phase = PhaseNegotiating
 	case "capture_metrics":
 		// The local capture side, once a second. Two things are read from it:

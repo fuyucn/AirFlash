@@ -97,10 +97,9 @@ func Browse(ctx context.Context, onInterface int, onChange func([]Receiver), onE
 				rec := recordFrom(entry)
 				// Not an AirPlay service, so not a receiver: a Spotify Connect
 				// speaker or a smart-home hub that answered on the same channel.
-				if rec.Type == "" {
-					continue
-				}
-				if rec.Address == "" {
+				// And a record with no address cannot be reached at all. Both
+				// are dropped for the same reason: neither is something to list.
+				if rec.Type == "" || rec.Address == "" {
 					continue
 				}
 				mu.Lock()
