@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -677,5 +678,114 @@ func TestAWriteRefusesToReplaceADirectoryWithAFile(t *testing.T) {
 	}
 	if !st.IsDir() {
 		t.Error("the directory was replaced by a file")
+	}
+}
+
+func TestCurrentHandsOutACopyTheCallerCannotCorrupt(t *testing.T) {
+	// Current returns the Settings value, so its slices and maps still point at
+	// the store's own data. Every call site reads and none writes, so nothing is
+	// broken today - but a caller that changed one would edit the store from
+	// outside its lock, with no write to disk and no test failing. A value that
+	// cannot be edited is the only version of this that stays safe.
+	s := Open(filepath.Join(t.TempDir(), "settings.json"))
+	s.Update(func(s *Settings) {
+		s.ManualReceivers = []ManualReceiver{{Id: "a", Host: "{{IP_gxfw5vpu}}", Port: 7000}}
+		s.ReceiverAliases = map[string]string{"a": "Living Room"}
+		s.PerReceiver = map[string]ReceiverOptions{"a": {Volume: ptr(80)}}
+		s.Sessions = []Session{{TargetMs: 500}}
+	})
+
+	got := s.Current()
+
+	// Mutating what Current returned must not reach the store.
+	got.ManualReceivers[0].Id = "changed"
+	got.ManualReceivers[0].Port = 1
+	got.ReceiverAliases["a"] = "changed"
+	got.PerReceiver["a"] = ReceiverOptions{}
+	got.Sessions[0].TargetMs = 999
+	got.Sessions = append(got.Sessions, Session{TargetMs: 1})
+
+	after := s.Current()
+	if after.ManualReceivers[0].Id != "a" {
+		t.Errorf("a caller's edit reached the store: receiver id = %q", after.ManualReceivers[0].Id)
+	}
+	if after.ManualReceivers[0].Port != 7000 {
+		t.Errorf("a caller's edit reached the store: port = %d", after.ManualReceivers[0].Port)
+	}
+	if after.ReceiverAliases["a"] != "Living Room" {
+		t.Errorf("a caller's edit reached the store: alias = %q", after.ReceiverAliases["a"])
+	}
+	if after.PerReceiver["a"].Volume == nil || *after.PerReceiver["a"].Volume != 80 {
+		t.Error("a caller's edit reached the store: per-receiver volume")
+	}
+	if after.Sessions[0].TargetMs != 500 {
+		t.Errorf("a caller's edit reached the store: session target = %d", after.Sessions[0].TargetMs)
+	}
+	if len(after.Sessions) != 1 {
+		t.Errorf("a caller's append reached the store: %d sessions", len(after.Sessions))
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// Every reference-typed field of Settings must be copied by clone, or Current
+// hands out something the caller can edit in place. A hand-written list would
+// stop being true the moment a field is added - which is when it matters, since
+// the new field would be shared and nothing would say so. Reflection walks the
+// struct instead, and fills every reference field at once through a JSON round
+// trip so each has something in it.
+func TestEveryReferenceFieldIsCloned(t *testing.T) {
+	// A document with a value in every reference field the type has.
+	raw := []byte(`{
+	  "manual_receivers":[{"id":"a","host":"10.0.10.31","port":7000}],
+	  "receiver_aliases":{"a":"Living Room"},
+	  "receivers":{"a":{"volume":80}},
+	  "sessions":[{"target_ms":500}]
+	}`)
+	var full Settings
+	if err := json.Unmarshal(raw, &full); err != nil {
+		t.Fatal(err)
+	}
+
+	ty := reflect.TypeOf(Settings{})
+	checked := 0
+	for i := 0; i < ty.NumField(); i++ {
+		switch ty.Field(i).Type.Kind() {
+		case reflect.Slice, reflect.Map:
+		default:
+			continue
+		}
+		name := ty.Field(i).Name
+		checked++
+		clone := full.clone()
+		originalStore := full
+		original := reflect.ValueOf(&originalStore).Elem().Field(i)
+		cloned := reflect.ValueOf(&clone).Elem().Field(i)
+		switch ty.Field(i).Type.Kind() {
+		case reflect.Slice:
+			if original.Len() == 0 {
+				t.Fatalf("%s has no value to test the copy with", name)
+			}
+			// Grow the original; a shared clone grows with it.
+			original.Set(reflect.AppendSlice(original,
+				reflect.MakeSlice(original.Type(), 1, 1)))
+			if cloned.Len() != original.Len()-1 {
+				t.Errorf("%s is shared with the copy Current returns", name)
+			}
+		case reflect.Map:
+			if original.Len() == 0 {
+				t.Fatalf("%s has no value to test the copy with", name)
+			}
+			n := cloned.Len()
+			kv := reflect.New(original.Type().Key()).Elem()
+			vv := reflect.New(original.Type().Elem()).Elem()
+			original.SetMapIndex(kv, vv)
+			if cloned.Len() != n {
+				t.Errorf("%s is shared with the copy Current returns", name)
+			}
+		}
+	}
+	if checked < 4 {
+		t.Fatalf("checked only %d reference fields; the walk is not reading the struct", checked)
 	}
 }

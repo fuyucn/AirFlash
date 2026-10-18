@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"strings"
 
@@ -219,11 +220,29 @@ func DefaultPath() string {
 	return filepath.Join(dir, "AirFlash", "shell.json")
 }
 
-// Current returns a copy of the settings.
+// Current returns a copy of the settings that the caller owns outright.
+//
+// Copying the struct alone is not a copy: its slices and maps still point at the
+// store's own data, so a caller that changed one would be editing the store
+// from outside its lock, with nothing written to disk and no test failing. Every
+// call site reads today, which is why this has never bitten - but the value
+// handed out has to be one that cannot be edited for that to stay true.
 func (s *Store) Current() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cur
+	return s.cur.clone()
+}
+
+// clone is the settings with every reference field copied, so the result shares
+// nothing with the original.
+func (s Settings) clone() Settings {
+	out := s
+	out.ManualReceivers = append([]ManualReceiver(nil), s.ManualReceivers...)
+	out.Sessions = append([]Session(nil), s.Sessions...)
+	out.ReceiverAliases = maps.Clone(s.ReceiverAliases)
+	out.PerReceiver = maps.Clone(s.PerReceiver)
+	out.Equalizer.BandGainsDB = append([]float64(nil), s.Equalizer.BandGainsDB...)
+	return out
 }
 
 // Update changes the settings and writes them.
