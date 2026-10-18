@@ -40,8 +40,12 @@ func (o Observation) Trouble() bool {
 
 // Limits bound what adaptation may do.
 const (
-	// MinTargetMs and MaxTargetMs mirror what the engine accepts.
-	MinTargetMs = 200
+	// MinTargetMs and MaxTargetMs mirror what the engine accepts, which is the
+	// same range the settings clamp to. The floor used to be 200 here, and the
+	// settings' own floor was lowered to 1 when Real-time's 120 ms was found to
+	// be silently raised - but this copy was missed, so Auto still handed a
+	// user who chose Real-time the 200 ms it was supposed to stop applying.
+	MinTargetMs = 1
 	MaxTargetMs = 2000
 
 	// safetyFactor is how much of the round trip the buffer should cover. A

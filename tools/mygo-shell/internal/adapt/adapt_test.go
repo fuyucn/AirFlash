@@ -125,3 +125,28 @@ func TestKeepBoundsTheHistory(t *testing.T) {
 		t.Errorf("kept %d, want all 20", len(got))
 	}
 }
+
+func TestTheUsersFloorIsNeverRaisedByAdaptation(t *testing.T) {
+	// Real-time is 120 ms, and the settings allow it: the floor there is 1 ms,
+	// because the engine accepts it. Adaptation kept its own 200 ms floor, so a
+	// user who chose Real-time with Auto on was silently handed 200 ms - the
+	// aggressive mode was unavailable through the shell, which is exactly the
+	// bug the settings comment says was fixed. It was fixed in one place only.
+	for _, floor := range []int{120, 200, 500} {
+		target, reason := Recommend(floor, nil)
+		if target != floor {
+			t.Errorf("Recommend(%d) = %d (%s), want the user's own target", floor, target, reason)
+		}
+	}
+}
+
+func TestAdaptationStillBoundsWhatTheEngineAccepts(t *testing.T) {
+	// The floor came from the engine's range, so it still has to be bounded by
+	// it: a target below 1 ms or above 2000 is not something to ask for.
+	if got, _ := Recommend(0, nil); got != 1 {
+		t.Errorf("Recommend(0) = %d, want the engine's 1 ms floor", got)
+	}
+	if got, _ := Recommend(5000, nil); got != 2000 {
+		t.Errorf("Recommend(5000) = %d, want the engine's 2000 ms ceiling", got)
+	}
+}
