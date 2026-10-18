@@ -172,4 +172,12 @@ var chinese = map[string]string{
 	"%.0f ms now":                            "当前 %.0f ms",
 	"target %d ms":                           "目标 %d ms",
 	"stereo · %d/2 · %s":                     "立体声 · %d/2 · %s",
+	"incomplete":                             "不完整",
+	"stopped":                                "已停止",
+	"the receiver":                           "接收端",
+	"no sound from the PC for %d s":          "电脑已 %d 秒没有声音",
+	"reconnecting %d/%d":                     "正在重连 %d/%d",
+	"ms":                                     "毫秒",
+	"TARGET %d MS":                           "目标 %d 毫秒",
+	"The receiver's feedback is late, which is what a rising ping looks like.": "接收端的反馈来晚了，这正是延迟升高时的样子。",
 }
