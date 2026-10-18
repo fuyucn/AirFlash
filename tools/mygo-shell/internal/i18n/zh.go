@@ -170,4 +170,5 @@ var chinese = map[string]string{
 	"%d s ago":                               "%d 秒前",
 	"%.0f ms now":                            "当前 %.0f ms",
 	"target %d ms":                           "目标 %d ms",
+	"stereo · %d/2 · %s":                     "立体声 · %d/2 · %s",
 }

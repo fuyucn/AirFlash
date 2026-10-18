@@ -817,6 +817,36 @@ func TestNoEnglishLeaksIntoTheChineseInterface(t *testing.T) {
 			}
 		}
 	}
+
+	// The tray panel is a separate surface with its own strings, and it had a
+	// stereo label the window translated and the panel did not.
+	// A stereo pair is two devices that share a tsid. Without it the fold keeps
+	// them as separate singles and the group label is never drawn.
+	group := discovery.Fold([]discovery.Record{
+		{Instance: "Left", Type: discovery.ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "AA", "model": "AudioAccessory1,1", "tsid": "PAIR"}},
+		{Instance: "AA@Left", Type: discovery.ServiceRAOP, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "AA", "tsid": "PAIR", "am": "AudioAccessory1,1"}},
+		{Instance: "Right", Type: discovery.ServiceAirPlay, Address: "10.0.10.32", Port: 7000,
+			TXT: map[string]string{"deviceid": "BB", "model": "AudioAccessory1,1", "tsid": "PAIR"}},
+		{Instance: "BB@Right", Type: discovery.ServiceRAOP, Address: "10.0.10.32", Port: 7000,
+			TXT: map[string]string{"deviceid": "BB", "tsid": "PAIR", "am": "AudioAccessory1,1"}},
+	})[0]
+	panel := NewPanel(Deps{
+		Words:           i18n.For(i18n.Chinese),
+		State:           st,
+		Settings:        cfg,
+		Life:            shell.New(),
+		Receivers:       func() []discovery.Receiver { return []discovery.Receiver{group} },
+		PlayingReceiver: func() *discovery.Receiver { return nil },
+	})
+	for _, text := range ui.NewTester(panel.View, panelWidth, 900).Texts() {
+		for _, phrase := range []string{"stereo"} {
+			if strings.Contains(text, phrase) {
+				t.Errorf("the panel shows English %q in %q", phrase, text)
+			}
+		}
+	}
 }
 
 func TestSetPageAcceptsTheIdItIsGiven(t *testing.T) {

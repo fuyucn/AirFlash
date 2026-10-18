@@ -219,7 +219,7 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 				}
 				ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk).
 					Ellipsis("…").SingleLine()
-				ui.Text(c, recDetail(rec)).FontSize(sizeSmall).TextColor(pal.InkMuted).
+				ui.Text(c, p.recDetail(rec)).FontSize(sizeSmall).TextColor(pal.InkMuted).
 					Ellipsis("…").SingleLine()
 			})
 
@@ -469,7 +469,7 @@ func (p *Panel) footer(c *ui.Context, pal palette) {
 }
 
 // recDetail is the second line of a receiver: what it is and where it is.
-func recDetail(rec discovery.Receiver) string {
+func (p *Panel) recDetail(rec discovery.Receiver) string {
 	detail := rec.Address
 	if name := discovery.DisplayModel(rec.Model); name != "" {
 		// The product name, not the internal code: "HomePod" is what the user
@@ -477,7 +477,7 @@ func recDetail(rec discovery.Receiver) string {
 		detail = name + " · " + rec.Address
 	}
 	if rec.IsGroup() {
-		detail = fmt.Sprintf("stereo %d/2 · %s", len(rec.Members), detail)
+		detail = fmt.Sprintf(p.t("stereo · %d/2 · %s"), len(rec.Members), detail)
 	}
 	return detail
 }
