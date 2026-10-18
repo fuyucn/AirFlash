@@ -217,26 +217,32 @@ func (s *State) SetReconnecting(attempt, max int) {
 	s.metrics.ReconnectMax = max
 }
 
-// SessionRTT returns the peak and median round trip of the session so far.
-// The median needs a few samples to mean anything, so an empty second value is
-// returned until then.
-func (s *State) SessionRTT() (peak, median float64) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	peak = s.metrics.SessionPeakRTTMs
-	if len(s.metrics.rttSamples) == 0 {
-		return peak, 0
-	}
-	sorted := append([]float64(nil), s.metrics.rttSamples...)
-	sort.Float64s(sorted)
-	return peak, sorted[len(sorted)/2]
-}
-
 // ResetSession clears the per-session counters, so a new stream is judged on
 // its own numbers rather than the last one's.
+func (s *State) ResetAndSummarize() (peak, median float64, m Metrics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	peak = s.metrics.SessionPeakRTTMs
+	if len(s.metrics.rttSamples) > 0 {
+		sorted := append([]float64(nil), s.metrics.rttSamples...)
+		sort.Float64s(sorted)
+		median = sorted[len(sorted)/2]
+	}
+	m = s.metrics
+	m.History = append([]float64(nil), m.History...)
+	m.Slots = append([]Slot(nil), m.Slots...)
+	s.resetLocked()
+	return peak, median, m
+}
+
 func (s *State) ResetSession() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.resetLocked()
+}
+
+// resetLocked clears the per-session counters. The caller holds the lock.
+func (s *State) resetLocked() {
 	s.metrics.SessionPeakRTTMs = 0
 	s.metrics.rttSamples = nil
 	s.metrics.SenderLateRecoveries = 0

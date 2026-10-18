@@ -623,3 +623,23 @@ func TestANewSessionDoesNotInheritTheLastOneSTotals(t *testing.T) {
 		t.Errorf("backlog limit = %d after a reset, want 0", m.BacklogLimit)
 	}
 }
+
+func TestTheSessionSummaryIsOneSnapshot(t *testing.T) {
+	// recordSession read the session three times under three locks: once for the
+	// round trips, once for the counters, once to clear it. An engine report
+	// arriving between those reads is folded into one of them and not the
+	// others, so a recorded session has a peak from one moment and counts from
+	// another - and the reset can clear a report that arrived after the counts
+	// were read, losing it entirely.
+	st := NewState()
+	st.Apply(transportEvent(t, oneMember))
+
+	peak, median, m := st.ResetAndSummarize()
+	if peak <= 0 {
+		t.Fatalf("peak = %v, want the reported round trip", peak)
+	}
+	if m.PacketsSent == 0 {
+		t.Error("the snapshot has no packets, so the summary would record an empty session")
+	}
+	_ = median
+}

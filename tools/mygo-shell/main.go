@@ -696,14 +696,15 @@ func observations(sessions []settings.Session) []adapt.Observation {
 // recordSession stores what a finished session turned out to be, so the next
 // one can learn from it. It runs when a stream stops, never during one.
 func (a *App) recordSession() {
-	peak, median := a.state.SessionRTT()
-	m := a.state.Snapshot()
+	// One locked pass. The counters are read and cleared together, so an engine
+	// report cannot land between the two and be folded into the next session's
+	// record while this one already counted the rest.
+	peak, median, m := a.state.ResetAndSummarize()
 	cfg := a.settings.Current()
 
 	// A session that never measured anything has nothing to teach.
 	if peak == 0 && m.SenderLateRecoveries == 0 && m.SkippedPackets == 0 &&
 		m.RetransmitExpired == 0 {
-		a.state.ResetSession()
 		return
 	}
 
@@ -718,7 +719,6 @@ func (a *App) recordSession() {
 			At:             time.Now(),
 		})
 	})
-	a.state.ResetSession()
 }
 
 // togglePanel opens the tray panel, or closes it if it is already open.
