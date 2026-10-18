@@ -256,6 +256,14 @@ func (a *App) onEngineEvent(ev engine.Event) {
 
 	// The engine reports several times a second; the redraw rate is what the
 	// mode chose, so a burst of events costs one frame rather than one each.
+	// A phase that moved is the exception: it is the state the surface is in, so
+	// it paints now rather than waiting for the throttle to open. The rate is
+	// still the rate - a session crosses a few phases in its life, not four a
+	// second.
+	if before != after {
+		a.paint()
+		return
+	}
 	now := time.Now().UnixMilli()
 	if !a.dueToPaint(now) {
 		return
@@ -285,6 +293,22 @@ func (a *App) dueToPaint(nowMs int64) bool {
 	}
 	a.lastPaint.Store(nowMs)
 	return true
+}
+
+// paint asks the open surfaces to draw again, whatever the throttle allows.
+//
+// The throttle keeps a burst of readings from costing a frame each. A phase is
+// not another reading: the surface is either saying the right thing or it is
+// lying, and a "Connecting" left on screen after the engine has moved on is a
+// lie the user is left to interpret.
+func (a *App) paint() {
+	a.lastPaint.Store(0)
+	if w := a.win.Load(); w != nil {
+		w.Invalidate()
+	}
+	if f := a.flyout.Load(); f != nil {
+		f.Invalidate()
+	}
 }
 
 func (a *App) openWindow(page string) {

@@ -70,6 +70,55 @@ func TestAnEngineEventReachesTheModel(t *testing.T) {
 	}
 }
 
+// The throttle exists to rate-limit readings. A phase is not a reading: it is
+// the state the surface is in. When the throttle skipped one, the surface kept
+// saying "Connecting" for a session that had already begun - the frozen reading
+// the user reported.
+func TestAPhaseChangeIsNotHeldBackByTheThrottle(t *testing.T) {
+	app := &App{
+		settings: settings.Open("/tmp/airflash-paint-phase.json"),
+		state:    engine.NewState(),
+	}
+	if !app.dueToPaint(1000) {
+		t.Fatal("the first event was refused, so there is nothing to throttle against")
+	}
+
+	// A phase that moves while the throttle is still closed must be painted at
+	// once rather than dropped, so the surface cannot keep saying the old state.
+	app.onEngineEvent(engine.Event{Event: "streaming", Raw: []byte(
+		`{"event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"c","members":1}`)})
+
+	if got := app.state.Snapshot().Phase; got != engine.PhaseStreaming {
+		t.Fatalf("phase = %q, want the event applied", got)
+	}
+	if got := app.lastPaint.Load(); got != 0 {
+		t.Errorf("lastPaint = %d, want it cleared so the phase paint went out now", got)
+	}
+}
+
+// A reading whose frame was throttled away must still reach the model. The
+// throttle drops frames, never data: what the engine said is folded in whether
+// or not a paint followed it.
+func TestAThrottledReadingStillReachesTheModel(t *testing.T) {
+	app := &App{
+		settings: settings.Open("/tmp/airflash-paint-model2.json"),
+		state:    engine.NewState(),
+	}
+	app.onEngineEvent(engine.Event{Event: "streaming", Raw: []byte(
+		`{"event":"streaming","requested_latency_ms":500,"sample_rate":44100,"clock_id":"c","members":1}`)})
+
+	app.onEngineEvent(engine.Event{Event: "capture_metrics", Raw: []byte(
+		`{"event":"capture_metrics","metrics":{"input_rate":48000}}`)})
+
+	st := app.state.Snapshot()
+	if st.Capture.InputRate != 48000 {
+		t.Errorf("input rate = %d, want the throttled reading to have been folded in", st.Capture.InputRate)
+	}
+	if got := app.lastPaint.Load(); got == 0 {
+		t.Error("a reading cleared the throttle, which would let every event paint")
+	}
+}
+
 func TestAnAuthFailureIsNotRetriedForever(t *testing.T) {
 	// A retry asks the receiver for the credentials that just failed. What a
 	// failure like this needs is a PIN, so the loop has to stop and say so.
