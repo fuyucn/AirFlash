@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -650,5 +651,34 @@ func TestThePanelGetsEveryDependencyItReads(t *testing.T) {
 	// branch: a nil here is a panic, not an empty answer.
 	if d.PlayingReceiver == nil {
 		t.Error("the panel was given no PlayingReceiver, so its receiver list panics")
+	}
+}
+
+func TestTheWindowDepsPassATranslator(t *testing.T) {
+	// The window's Deps were built without Words, so every string in it fell
+	// back to English while the tray panel, which does pass a translator, was
+	// Chinese. The render tool hid it because it builds its own dependencies.
+	//
+	// The literal is read from the source rather than built, because building it
+	// needs a running window; what matters is that the field is there.
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The window's literal is the one that sets Settings and Life but is not
+	// panelDeps, so look for a Words line between the window's opening brace and
+	// its view.SetPage call.
+	text := string(src)
+	open := strings.Index(text, "view := appui.New(appui.Deps{")
+	if open < 0 {
+		t.Fatal("the window's dependencies are not built where they were")
+	}
+	close := strings.Index(text[open:], "view.SetPage(page)")
+	if close < 0 {
+		t.Fatal("the window literal has no end marker")
+	}
+	body := text[open : open+close]
+	if !strings.Contains(body, "Words:") {
+		t.Error("the window's dependencies have no translator, so the window is drawn in English")
 	}
 }

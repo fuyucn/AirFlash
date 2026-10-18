@@ -354,6 +354,10 @@ func (a *App) openWindow(page string) {
 		return
 	}
 	view := appui.New(appui.Deps{
+		// The words the window is drawn in. Without this every string fell back
+		// to English while the tray panel, which does pass a translator, was
+		// Chinese - and the render tool hid it because it builds its own deps.
+		Words:           i18n.For(a.settings.Current().Lang()),
 		State:           a.state,
 		Settings:        a.settings,
 		Life:            a.life,
