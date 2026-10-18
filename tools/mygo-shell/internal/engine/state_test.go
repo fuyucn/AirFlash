@@ -597,3 +597,29 @@ func TestAnAcceptedVolumeClearsAnEarlierRefusal(t *testing.T) {
 		t.Errorf("the refusal outlived an accepted command: %q", got)
 	}
 }
+
+func TestANewSessionDoesNotInheritTheLastOneSTotals(t *testing.T) {
+	// Backlog is the deepest queue the sender reached, kept with max because a
+	// report is a sample and the peak is what matters. ResetSession did not
+	// clear it, so a second session started reporting the first session's peak -
+	// and the same for the cumulative counters, which are replaced rather than
+	// added, so a report from the new session does eventually fix those.
+	st := NewState()
+	st.Apply(transportEvent(t, `{"host":"10.0.10.31","media":{"packets_sent":500,
+		"receiver_latency_ms":466,"media_backlog_packets":47,"media_backlog_limit_packets":47},
+		"health":{"feedback_rtt_ms":21.0}}`))
+
+	if got := st.Snapshot().BacklogPackets; got != 47 {
+		t.Fatalf("backlog = %d, want 47 from the first session", got)
+	}
+
+	st.ResetSession()
+
+	m := st.Snapshot()
+	if m.BacklogPackets != 0 {
+		t.Errorf("backlog = %d after a reset, want 0: a new session would inherit it", m.BacklogPackets)
+	}
+	if m.BacklogLimit != 0 {
+		t.Errorf("backlog limit = %d after a reset, want 0", m.BacklogLimit)
+	}
+}

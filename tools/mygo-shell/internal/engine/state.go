@@ -245,6 +245,23 @@ func (s *State) ResetSession() {
 	s.metrics.RetransmitMissing = 0
 	s.metrics.RetransmitQueueDrops = 0
 	s.metrics.MediaSendDropped = 0
+	// The backlog is a peak, kept with max across reports, so it does not fall
+	// when a new session starts reporting small numbers - it has to be cleared.
+	s.metrics.BacklogPackets = 0
+	s.metrics.BacklogLimit = 0
+	// The cumulative counters are replaced by each report, so a stale one would
+	// be corrected at the first report of the new session. Clearing them is what
+	// stops the surface showing the last session's totals in the gap before it.
+	s.metrics.PacketsSent = 0
+	s.metrics.MediaSendErrors = 0
+	s.metrics.MediaBacklogged = 0
+	s.metrics.RetransmitRequests = 0
+	s.metrics.RetransmitsSent = 0
+	s.metrics.FeedbackFailures = 0
+	s.metrics.MaxSendLatenessUs = 0
+	// A refusal belonged to the last session's controls.
+	s.metrics.DeviceVolumeErr = ""
+	s.metrics.EqualizerErr = ""
 	s.metrics.History = nil
 	s.metrics.Slots = nil
 	s.metrics.HasTotalLatency = false

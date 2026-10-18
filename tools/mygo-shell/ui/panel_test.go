@@ -869,3 +869,83 @@ func TestSetPageAcceptsTheIdItIsGiven(t *testing.T) {
 		}
 	}
 }
+
+func TestChoosingASampleRateChangesTheSetting(t *testing.T) {
+	// The control is a segmented switch bound to a local index that is rebuilt
+	// from the settings every frame. If the click did not reach the setting, the
+	// next frame would rebuild the index from the old value and the choice would
+	// snap back - a control that looks like it does not work.
+	cfg := settings.Open("/tmp/airflash-sample-rate.json")
+	cfg.Update(func(s *settings.Settings) { s.SampleRate = 44100 })
+	got := 0
+	view := New(Deps{
+		Words:    i18n.For(i18n.English),
+		State:    streamingState(),
+		Settings: cfg,
+		Life:     shell.New(),
+		OnSampleRate: func(rate int) {
+			got = rate
+			cfg.Update(func(s *settings.Settings) { s.SampleRate = rate })
+		},
+	})
+	view.SetPage("settings")
+	tester := ui.NewTester(view.View, 880, 1180)
+
+	if cfg.Current().SampleRate != 44100 {
+		t.Fatalf("the default rate is %d, want 44100", cfg.Current().SampleRate)
+	}
+	if err := tester.Click("48 kHz"); err != nil {
+		t.Fatalf("clicking 48 kHz: %v", err)
+	}
+	if got != 48000 {
+		t.Errorf("the click reported %d, want 48000", got)
+	}
+	if cfg.Current().SampleRate != 48000 {
+		t.Errorf("the setting is %d, want the choice to have been stored", cfg.Current().SampleRate)
+	}
+	// And the next frame keeps the choice rather than rebuilding it away.
+	tester.Frame()
+	if !tester.HasText("48 kHz") {
+		t.Error("the chosen rate is not drawn after the rebuild")
+	}
+}
+
+func TestChoosingALatencyModeChangesTheSetting(t *testing.T) {
+	// Same shape as the sample rate: the segmented control's index is rebuilt
+	// from the settings every frame, so a click that did not reach the setting
+	// would snap back on the next frame.
+	cfg := settings.Open("/tmp/airflash-latency-mode.json")
+	cfg.Update(func(s *settings.Settings) { s.LatencyAuto = true; s.LatencyMs = 500 })
+	var gotMs int
+	var gotAuto bool = true
+	view := New(Deps{
+		Words:    i18n.For(i18n.English),
+		State:    streamingState(),
+		Settings: cfg,
+		Life:     shell.New(),
+		OnAuto: func(on bool) {
+			gotAuto = on
+			cfg.Update(func(s *settings.Settings) { s.LatencyAuto = on })
+		},
+		OnLatency: func(ms int) {
+			gotMs = ms
+			cfg.Update(func(s *settings.Settings) { s.LatencyMs = ms })
+		},
+	})
+	view.SetPage("settings")
+	tester := ui.NewTester(view.View, 880, 1180)
+
+	if err := tester.Click("Buffered · 500 ms"); err != nil {
+		t.Fatalf("clicking Buffered: %v", err)
+	}
+	if gotAuto {
+		t.Error("choosing a pinned mode left Auto on, so the choice would be ignored")
+	}
+	if gotMs != 500 {
+		t.Errorf("reported %d ms, want 500", gotMs)
+	}
+	if cfg.Current().LatencyMs != 500 || cfg.Current().LatencyAuto {
+		t.Errorf("settings are %d ms auto=%v, want 500 pinned",
+			cfg.Current().LatencyMs, cfg.Current().LatencyAuto)
+	}
+}
