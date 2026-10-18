@@ -215,7 +215,7 @@ func (a *App) startAttempt(s session) {
 	// pair is one receiver with two halves, so its settings are the pair's.
 	switch {
 	case s.receiverID != "":
-		opts.LatencyMs = cfg.LatencyFor(s.receiverID)
+		opts.LatencyMs = cfg.AutoLatencyFor(s.receiverID, a.adaptedTarget())
 		opts.Gain = cfg.GainFor(s.receiverID)
 	default:
 		opts.LatencyMs = cfg.EffectiveLatencyMs(a.adaptedTarget())

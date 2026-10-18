@@ -112,15 +112,12 @@ func (p *Panel) View(c *ui.Context) {
 	// The panel scrolls once it is taller than the flyout allows, so a network
 	// with more speakers than fit reaches them all instead of clipping the last
 	// one - and the reading and the footer - off the bottom.
-	box := ui.Scroll(c).Fill().Padding(14).Gap(12).MaxHeight(float32(PanelMaxHeight()))
+	box := ui.Scroll(c).Fill().Padding(16).Gap(14).MaxHeight(float32(PanelMaxHeight()))
 	switch {
 	case c.Vibrancy():
 		// Over the popover's own material.
 	default:
-		// The platform does not draw a surface, so the panel does. Square, and
-		// outlined by a dashed rule like every other block in the app.
-		box.Background(pal.Ground).Radius(0).
-			BorderWidth(1).BorderStyle(ui.BorderSolid).BorderColor(pal.Separator)
+		box.Background(pal.Ground).Radius(0)
 	}
 
 	box.Children(func() {
@@ -135,13 +132,17 @@ func (p *Panel) View(c *ui.Context) {
 // header names the product and says, in one word, what the engine is doing.
 func (p *Panel) header(c *ui.Context, pal palette, cfg settings.Settings, st engine.Metrics) {
 	label, col := phaseLabel(p.deps.Words, pal, st.Phase)
-	ui.Row(c).FillWidth().Padding(0, 0, 10, 0).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, p.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(pal.Ink).
-			LetterSpacing(1.2)
+	ui.Row(c).FillWidth().Padding(0, 0, 12, 0).AlignItems(ui.Center).Children(func() {
+		speakerMark(c, pal, 34, st.Phase == engine.PhaseStreaming)
+		ui.Column(c).Gap(1).Children(func() {
+			ui.Text(c, p.t("AIRFLASH")).FontSize(sizeBody).Bold().TextColor(pal.Ink).
+				LetterSpacing(0.6)
+			ui.Text(c, p.t("AirPlay receiver")).FontSize(sizeSmall).TextColor(pal.InkMuted)
+		})
 		ui.Spacer(c).Grow(1)
 		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
-			ui.Text(c, label).FontSize(sizeSmall).TextColor(pal.InkMuted)
+			ui.Box(c).Width(8).Height(8).Radius(4).Background(col)
+			ui.Text(c, label).FontSize(sizeSmall).TextColor(col)
 		})
 	}).BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(pal.Separator)
 }
@@ -194,13 +195,10 @@ func (p *Panel) receivers(c *ui.Context, pal palette, st engine.Metrics) {
 // one that is playing. Only the playing receiver gets a Stop and a volume,
 // because those act on the session, and there is exactly one session.
 func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, playing bool) {
-	row := ui.Column(c).FillWidth().Padding(10, 9).Gap(8).Radius(radiusControl)
+	row := ui.Column(c).FillWidth().Padding(14, 12).Gap(12).Radius(radiusBlock)
 	if playing {
-		// The playing row is the one block that steps out of the page, so the
-		// eye finds it without the accent spending itself on a fill. It steps up
-		// onto the surface rather than sideways onto a hover tone: a hover is a
-		// few points from the ground and would leave the live row invisible.
-		row.Background(pal.Surface).Shadow(0, 1, 3, 0, pal.Shadow)
+		row.Background(pal.Surface).Shadow(0, 1, 2, 0, pal.Shadow).
+			BorderWidth(1).BorderStyle(ui.BorderSolid).BorderColor(pal.Accent.Alpha(0.45))
 	} else if !rec.Online {
 		// A receiver that stopped answering is still listed, because the user
 		// may want to see that it is the one that went, not have it vanish. It
@@ -212,6 +210,7 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 
 	row.Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			speakerMark(c, pal, 40, playing)
 			ui.Column(c).Grow(1).Shrink(1).Gap(2).Children(func() {
 				// An offline receiver's name steps back to the muted ink: it is
 				// there, but it is not something to play to.
@@ -221,7 +220,8 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 				}
 				ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk).
 					Ellipsis("…").SingleLine()
-				ui.Text(c, p.recDetail(rec)).FontSize(sizeSmall).TextColor(pal.InkMuted).
+				status, statusColor := receiverStatus(p.deps.Words, pal, rec, playing)
+				ui.Text(c, status+" · "+p.recDetail(rec)).FontSize(sizeSmall).TextColor(statusColor).
 					Ellipsis("…").SingleLine()
 			})
 
@@ -235,15 +235,11 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 				// than offering a Play that would time out.
 				ui.Text(c, p.t("offline")).FontSize(sizeSmall).TextColor(pal.InkMuted)
 			case playing:
-				// Disconnect, not Stop: what the button ends is the connection to
-				// this receiver, which is what the row above it says. "Stop" reads
-				// as pausing something that is playing, and the receiver stays
-				// connected either way.
 				if ui.Button(c, p.t("Disconnect")).Clicked() && p.deps.OnStop != nil {
 					p.deps.OnStop()
 				}
 			default:
-				if ui.Button(c, p.t("Play")).Clicked() && p.deps.OnPlay != nil {
+				if ui.PrimaryButton(c, p.t("Play")).Clicked() && p.deps.OnPlay != nil {
 					p.deps.OnPlay(rec)
 				}
 			}
@@ -378,7 +374,7 @@ func (p *Panel) volumeRow(c *ui.Context, pal palette, rec discovery.Receiver) {
 		}
 	}
 	ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, p.t("VOL")).FontSize(sizeSmall).TextColor(pal.InkMuted).LetterSpacing(0.9)
+		ui.Text(c, p.t("Volume")).FontSize(sizeSmall).TextColor(pal.InkMuted)
 		ui.Slider(c, &vol, 0, 1).Grow(1).Label(p.t("VOLUME")).OnChange(func() {
 			p.volume = vol
 			p.volumeKnown = true

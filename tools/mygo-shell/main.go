@@ -365,12 +365,7 @@ func (a *App) openWindow(page string) {
 		PlayingReceiver: a.PlayingReceiver,
 		OnPlay:          a.playReceiver,
 		OnStop:          a.stopStream,
-		OnGain: func(g float64) {
-			a.settings.Update(func(s *settings.Settings) { s.Gain = g })
-			if c := a.client.Load(); c != nil {
-				_, _ = c.SetGain(g)
-			}
-		},
+		OnDeviceVolume:  a.setDeviceVolume,
 		OnLatency: func(ms int) {
 			a.settings.Update(func(s *settings.Settings) { s.LatencyMs = ms })
 		},
@@ -780,16 +775,10 @@ func (a *App) panelDeps() appui.Deps {
 		PlayingReceiver: a.PlayingReceiver,
 		OnPlay:          a.playReceiver,
 		OnStop:          a.stopStream,
-		OnGain: func(g float64) {
-			a.settings.Update(func(s *settings.Settings) { s.Gain = g })
-			if c := a.client.Load(); c != nil {
-				_, _ = c.SetGain(g)
-			}
-		},
-		OnDeviceVolume: a.setDeviceVolume,
-		OnPairPin:      a.pairPin,
-		OnOpenWindow:   a.openWindow,
-		OnQuit:         func() { mygo.App.Quit() },
+		OnDeviceVolume:  a.setDeviceVolume,
+		OnPairPin:       a.pairPin,
+		OnOpenWindow:    a.openWindow,
+		OnQuit:          func() { mygo.App.Quit() },
 	}
 }
 

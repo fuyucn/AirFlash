@@ -38,6 +38,7 @@ type palette struct {
 	Ground        ui.Color
 	Surface       ui.Color
 	SurfaceRaised ui.Color
+	SurfaceTint   ui.Color
 	Separator     ui.Color
 	Fill          ui.Color
 	Ink           ui.Color
@@ -50,14 +51,17 @@ type palette struct {
 	Danger        ui.Color
 	Success       ui.Color
 	Shadow        ui.Color
+	Speaker       ui.Color
+	SpeakerDeep   ui.Color
 }
 
 // The corner radii: one shared language of rounding. The platform uses a small
 // radius on controls and a larger one on windows and cards, so everything here
 // takes the nearer of the two rather than inventing its own.
 const (
-	radiusControl float32 = 6  // buttons, fields, small chips
-	radiusBlock   float32 = 10 // a group of rows, a panel
+	radiusControl float32 = 8  // buttons, fields, small chips
+	radiusBlock   float32 = 14 // a group of rows, a panel
+	radiusTile    float32 = 18 // a receiver tile
 )
 
 // The type steps: the platform's own, so every size in the interface maps onto
@@ -77,6 +81,7 @@ func light() palette {
 		Ground:        ui.Hex("#F2F2F5"),
 		Surface:       ui.Hex("#FFFFFF"),
 		SurfaceRaised: ui.Hex("#FFFFFF"),
+		SurfaceTint:   ui.Hex("#F8F8FA"),
 		Separator:     ui.Hex("#DCDCE1"),
 		Fill:          ui.Hex("#EDEDF0"),
 		Ink:           ui.Hex("#1D1D1F"),
@@ -89,6 +94,8 @@ func light() palette {
 		Danger:        ui.Hex("#C4291F"),
 		Success:       ui.Hex("#1E7A38"),
 		Shadow:        ui.Hex("#0000001A"),
+		Speaker:       ui.Hex("#E9E9EE"),
+		SpeakerDeep:   ui.Hex("#C7C7CE"),
 	}
 }
 
@@ -99,6 +106,7 @@ func dark() palette {
 		Ground:        ui.Hex("#161618"),
 		Surface:       ui.Hex("#1E1E21"),
 		SurfaceRaised: ui.Hex("#26262A"),
+		SurfaceTint:   ui.Hex("#222225"),
 		Separator:     ui.Hex("#3A3A3F"),
 		Fill:          ui.Hex("#26262A"),
 		Ink:           ui.Hex("#F2F2F4"),
@@ -111,6 +119,8 @@ func dark() palette {
 		Danger:        ui.Hex("#EB7A70"),
 		Success:       ui.Hex("#4FBE7C"),
 		Shadow:        ui.Hex("#00000066"),
+		Speaker:       ui.Hex("#35353B"),
+		SpeakerDeep:   ui.Hex("#55555E"),
 	}
 }
 
@@ -182,7 +192,55 @@ func themeFor(p palette, isDark bool) *ui.Theme {
 // platform groups settings this way; so does this.
 func card(c *ui.Context, p palette, gap float32, build func()) {
 	ui.Column(c).FillWidth().Gap(gap).Radius(radiusBlock).Background(p.Surface).
-		Padding(14, 16).Shadow(0, 1, 3, 0, p.Shadow).Children(build)
+		Padding(16, 18).Shadow(0, 1, 2, 0, p.Shadow).Children(build)
+}
+
+// settingGroup is a quiet label over one raised surface, as a system
+// preferences pane groups its rows.
+func settingGroup(words i18n.Translator, c *ui.Context, p palette, title string, build func()) {
+	ui.Column(c).FillWidth().Gap(8).Children(func() {
+		sectionLabel(words, c, p, title)
+		card(c, p, 12, build)
+	})
+}
+
+// settingsRow is a label, a description, and a control, laid out as a system
+// settings row: the words take the room, the control stays at the trailing edge.
+func settingsRow(c *ui.Context, p palette, title, detail string, control func()) {
+	ui.Row(c).FillWidth().Gap(18).AlignItems(ui.Start).Children(func() {
+		ui.Column(c).Grow(1).Shrink(1).Gap(4).Children(func() {
+			ui.Text(c, title).FontSize(sizeBody).TextColor(p.Ink)
+			if detail != "" {
+				ui.Text(c, detail).FontSize(sizeSmall).TextColor(p.InkMuted)
+			}
+		})
+		control()
+	})
+}
+
+// settingsDivider is the hairline between rows of one group.
+func settingsDivider(c *ui.Context, p palette) {
+	ui.Box(c).FillWidth().Height(1).Background(p.Separator)
+}
+
+// speakerMark is the product's one drawn symbol: a HomePod-like speaker seen
+// from above, a soft rounded body under a grille. It is deliberately abstract:
+// the app cannot know which hardware a receiver is, and a wrong product photo
+// would be worse than a neutral mark.
+func speakerMark(c *ui.Context, p palette, size float32, active bool) {
+	fill, line := p.Speaker, p.SpeakerDeep
+	if active {
+		fill, line = p.Accent.Alpha(0.16), p.Accent
+	}
+	ui.Box(c).Width(size).Height(size).Radius(size / 2).Background(fill).
+		Draw(func(pt *ui.Painter, r ui.Rect) {
+			inset := r.W * 0.22
+			body := ui.Rect{X: r.X + inset, Y: r.Y + inset, W: r.W - 2*inset, H: r.H - 2*inset}
+			pt.Fill(body, line, body.W/2)
+			hole := r.W * 0.10
+			pt.Fill(ui.Rect{X: r.X + r.W/2 - hole/2, Y: r.Y + r.H*0.70,
+				W: hole, H: hole}, fill, hole/2)
+		})
 }
 
 // sectionLabel is the small uppercase label a section opens with. The letters

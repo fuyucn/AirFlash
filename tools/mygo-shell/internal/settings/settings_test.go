@@ -221,6 +221,27 @@ func TestAReceiverWithNothingSetUsesEverythingGlobal(t *testing.T) {
 	}
 }
 
+func TestAutoLatencySurvivesThePerReceiverStartPath(t *testing.T) {
+	// Playback always carries a receiver id, so startAttempt took LatencyFor(id)
+	// - which returned the global setting and never saw the adapted target. Auto
+	// therefore stayed at 120 ms forever however bad the network had been.
+	s := Default()
+	s.LatencyAuto = true
+	s.LatencyMs = 120
+
+	if got := s.AutoLatencyFor("homepod", 780); got != 780 {
+		t.Errorf("target = %d, want the adapted 780 on the per-receiver path", got)
+	}
+
+	// An explicit receiver target is a user's decision, not a floor Auto may
+	// raise behind their back.
+	own := 200
+	s.PerReceiver = map[string]ReceiverOptions{"homepod": {LatencyMs: &own}}
+	if got := s.AutoLatencyFor("homepod", 780); got != 200 {
+		t.Errorf("target = %d, want the receiver's explicit 200", got)
+	}
+}
+
 func TestHiddenKeepsAReceiverWithoutForgettingIt(t *testing.T) {
 	// Hidden is the one setting that is not a value to inherit: it is a fact
 	// about one receiver, so it only ever comes from that receiver.

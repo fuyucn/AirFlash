@@ -422,13 +422,31 @@ func (s Settings) Lang() i18n.Language {
 	return i18n.For(i18n.Language(s.Language)).Lang
 }
 
-// LatencyFor is the target one receiver streams at: its own if it set one, the
-// global otherwise.
+// LatencyFor is one receiver's explicit target, or the global setting when it
+// has none. It does not apply the learned Auto value; use AutoLatencyFor on any
+// path that starts a stream or describes what that stream will ask for.
 func (s Settings) LatencyFor(id string) int {
 	if o, ok := s.PerReceiver[id]; ok && o.LatencyMs != nil {
 		return *o.LatencyMs
 	}
-	return s.EffectiveLatencyMs(0)
+	return s.LatencyMs
+}
+
+// AutoLatencyFor is the target for one receiver with the learned value applied
+// to the path playback actually takes. A receiver's own target is explicit and
+// must win; otherwise Auto raises the global floor, exactly as it does for a
+// receiver that has not been discovered yet.
+func (s Settings) AutoLatencyFor(id string, adapted int) int {
+	if o, ok := s.PerReceiver[id]; ok && o.LatencyMs != nil {
+		return *o.LatencyMs
+	}
+	if !s.LatencyAuto {
+		return s.LatencyMs
+	}
+	if adapted <= 0 || adapted < s.LatencyMs {
+		return s.LatencyMs
+	}
+	return adapted
 }
 
 // GainFor is one receiver's own gain: its own if it set one, the global

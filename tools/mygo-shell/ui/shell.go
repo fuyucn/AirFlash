@@ -27,7 +27,6 @@ type Deps struct {
 	Receivers func() []discovery.Receiver
 	OnPlay    func(discovery.Receiver)
 	OnStop    func()
-	OnGain    func(float64)
 	OnLatency func(int)
 	OnAuto    func(bool)
 	AdaptedMs func() int
@@ -205,77 +204,100 @@ func (s *Shell) View(c *ui.Context) {
 	c.SetTheme(themeFor(p, isDark))
 	c.Root().Background(p.Ground)
 
-	// A top bar over the content, not a sidebar beside it. A horizontal menu is
-	// what a narrow window keeps: a 196 DIP sidebar beside a 400 DIP viewport
-	// leaves the page a sliver, and on a small window the sidebar is the first
-	// thing to go.
-	ui.Column(c).Fill().Children(func() {
-		s.topBar(c, p, cfg, st)
+	// The sidebar is the window's stable frame; the content is the page. A
+	// window narrow enough to squeeze the page folds the frame into a top bar,
+	// so the same controls stay reachable instead of becoming a sliver.
+	if width, _ := c.Size(); width < 700 {
+		ui.Column(c).Fill().Children(func() {
+			s.topBar(c, p, cfg, st)
+			s.content(c, p, cfg, st)
+		})
+		return
+	}
+	ui.Row(c).Fill().Children(func() {
+		s.sidebar(c, p, cfg, st)
 		s.content(c, p, cfg, st)
 	})
 }
 
-// topBar is the horizontal menu: the product name, the pages, and the engine's
-// state, in one row above the content.
-//
-// It is a Row rather than a Column because a top bar is what a narrow window
-// keeps. A sidebar of a fixed width beside a 400 DIP viewport leaves the page a
-// sliver, and the sidebar is the first thing to go when the window is small; a
-// bar that wraps and shrinks does not.
+// topBar is the narrow-window form of the sidebar. It keeps the same order and
+// the same state, because the two are one navigation, not two designs.
 func (s *Shell) topBar(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
-	bar := ui.Row(c).FillWidth().Height(38).Shrink(0).
-		Padding(10, 18).Gap(18).Radius(0).
-		Background(p.Surface)
-	// A hairline under the bar, so the menu and the content meet where the
-	// platform's own toolbars do: at a rule rather than at a change of tone.
-	bar.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator)
-
-	bar.Children(func() {
-		ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
-			LetterSpacing(1.2)
-
-		ui.Row(c).Grow(1).Gap(4).Children(func() {
-			s.navItem(c, p, s.t("Receivers"), pageReceivers)
-			s.navItem(c, p, s.t("Stats"), pageStats)
-			s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
-			s.navItem(c, p, s.t("Settings"), pageSettings)
+	ui.Column(c).FillWidth().Shrink(0).Background(p.SurfaceTint).
+		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator).
+		Children(func() {
+			ui.Row(c).FillWidth().Padding(12, 16).Gap(16).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink)
+				s.navItem(c, p, s.t("Receivers"), pageReceivers)
+				s.navItem(c, p, s.t("Stats"), pageStats)
+				s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
+				s.navItem(c, p, s.t("Settings"), pageSettings)
+				ui.Spacer(c).Grow(1)
+				label, col := phaseLabel(s.deps.Words, p, st.Phase)
+				ui.Box(c).Width(8).Height(8).Radius(4).Background(col)
+				ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
+			})
 		})
+}
 
-		// The engine's own state, always visible: whether audio is flowing is the
-		// one fact the user needs at a glance.
-		label, col := phaseLabel(s.deps.Words, p, st.Phase)
-		ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
-			ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
-			ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
-			if cfg.Mode == settings.ModeLightweight {
-				ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).TextColor(p.InkMuted).
-					LetterSpacing(0.9)
-			}
+// sidebar is the window's frame: identity, pages, and the live engine state.
+//
+// It is a sidebar rather than a row of tabs because this app has a durable
+// object at its center - the speaker - and a sidebar is where a desktop app
+// puts its stable navigation. The content column then reads as the page, not as
+// a strip under a web header.
+func (s *Shell) sidebar(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
+	ui.Column(c).Width(196).FillHeight().Shrink(0).Padding(24, 14).Gap(22).
+		Background(p.SurfaceTint).
+		BorderWidth(0, 1, 0, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator).
+		Children(func() {
+			ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+				speakerMark(c, p, 30, st.Phase == engine.PhaseStreaming)
+				ui.Column(c).Gap(1).Children(func() {
+					ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().
+						TextColor(p.Ink).LetterSpacing(0.8)
+					label, _ := phaseLabel(s.deps.Words, p, st.Phase)
+					ui.Text(c, label).FontSize(sizeSmall).TextColor(p.InkMuted)
+				})
+			})
+
+			ui.Column(c).FillWidth().Gap(4).Children(func() {
+				s.navItem(c, p, s.t("Receivers"), pageReceivers)
+				s.navItem(c, p, s.t("Stats"), pageStats)
+				s.navItem(c, p, s.t("Equalizer"), pageEqualizer)
+				s.navItem(c, p, s.t("Settings"), pageSettings)
+			})
+
+			ui.Spacer(c).Grow(1)
+
+			label, col := phaseLabel(s.deps.Words, p, st.Phase)
+			ui.Column(c).FillWidth().Gap(6).Padding(12, 12).Radius(radiusBlock).
+				Background(p.Surface).Children(func() {
+				ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+					ui.Box(c).Width(8).Height(8).Radius(4).Background(col)
+					ui.Text(c, label).FontSize(sizeSmall).TextColor(p.Ink)
+				})
+				if cfg.Mode == settings.ModeLightweight {
+					ui.Text(c, s.t("LIGHTWEIGHT")).FontSize(sizeSmall).
+						TextColor(p.InkMuted).LetterSpacing(0.8)
+				}
+			})
 		})
-	})
 }
 
 func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 	selected := s.page == target
-	// Selection is shown by a step in tone, not by the accent: the accent is
-	// reserved for the action and the live reading, so it keeps its meaning. A
-	// tab of a menu sits beside the others rather than filling the bar, so it is
-	// sized to its label rather than stretched.
-	row := ui.Row(c).Padding(6, 10).Radius(0).Gap(8).AlignItems(ui.Center)
+	row := ui.Row(c).FillWidth().Padding(8, 10).Radius(radiusControl).Gap(10).
+		AlignItems(ui.Center)
 	if selected {
-		row.Background(p.Hover)
+		row.Background(p.Accent.Alpha(0.12))
 	}
 	row.Children(func() {
 		col := p.InkMuted
 		if selected {
-			col = p.Ink
+			col = p.Accent
 		}
-		ui.Text(c, label).FontSize(sizeSmall).TextColor(col)
-		if selected {
-			// The mark that says which tab is open, beside the label rather than
-			// pushed to the far end of the bar.
-			ui.Box(c).Width(6).Height(6).Radius(0).Background(p.Accent)
-		}
+		ui.Text(c, label).FontSize(sizeBody).TextColor(col)
 	})
 	if row.Clicked() {
 		s.page = target
@@ -289,12 +311,12 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 // join them, which is a movement no other window on the machine asks for. So
 // the content is kept to the width at which a row still reads as a row, and the
 // space that would have been left over stays empty rather than being filled.
-const contentColumn = 560
+const contentColumn = 640
 
 func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
-	body := ui.Scroll(c).Grow(1).Padding(28, 24)
+	body := ui.Scroll(c).Grow(1).Padding(34, 34)
 	body.Children(func() {
-		ui.Column(c).Width(contentColumn).Center().Gap(0).Children(func() {
+		ui.Column(c).Width(contentColumn).Gap(0).Children(func() {
 			switch s.page {
 			case pageStats:
 				s.statsPage(c, p, cfg, st)
@@ -318,12 +340,12 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 // which is a question the page asks and has to answer.
 func (s *Shell) statsPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(28).Children(func() {
+		s.pageHeading(c, p, s.t("Stats"), s.t("Live measurements from the current session."))
 		s.headline(c, p, cfg, st)
 		if cfg.ShowTrend {
 			s.trend(c, p, cfg, st)
 			s.gaps(c, p, st)
 		}
-		s.controls(c, p, cfg, st)
 		s.diagnostics(c, p, cfg, st)
 	})
 }
@@ -443,7 +465,14 @@ func (s *Shell) headline(c *ui.Context, p palette, cfg settings.Settings, st eng
 				ui.Text(c, s.t("waiting for playback")).FontSize(sizeBody).TextColor(p.InkMuted)
 			}
 		})
-
+		if cfg.LatencyAuto {
+			adapted := s.adapted()
+			note := s.t("Auto is learning from completed sessions.")
+			if adapted > cfg.LatencyMs {
+				note = fmt.Sprintf(s.t("Auto raised the target to %d ms from measured round trips."), adapted)
+			}
+			ui.Text(c, note).FontSize(sizeSmall).TextColor(p.InkMuted)
+		}
 	})
 
 	// The parts that add up to it, as one table on a raised surface. The card is
@@ -704,33 +733,6 @@ func (s *Shell) adapted() int {
 	return s.deps.AdaptedMs()
 }
 
-// controls are the two things that actually change playback.
-func (s *Shell) controls(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
-	ui.Column(c).FillWidth().Gap(20).Children(func() {
-		// Volume, as a labelled slider the width of the content, on the same
-		// raised surface as the tables above and below it.
-		gain := cfg.Gain
-		card(c, p, 6, func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				sectionLabel(s.deps.Words, c, p, "VOLUME")
-				ui.Text(c, fmt.Sprintf("%.0f%%", gain*100)).
-					FontSize(sizeBody).TextColor(p.InkMuted)
-			})
-			ui.Slider(c, &gain, 0, 1).FillWidth().Label(s.t("VOLUME")).OnChange(func() {
-				if s.deps.OnGain != nil {
-					s.deps.OnGain(gain)
-				}
-			})
-		})
-
-		// No Play or Stop here. A Stats page is for reading what the numbers
-		// are; which receiver to play to is the panel's and the Receivers page's
-		// question, and both name the device they act on. A button here could
-		// only act on whatever was last played to, which reads as "play to I
-		// don't know what".
-	})
-}
-
 // playingReceiver is the receiver playback is going to, or nil.
 func (s *Shell) playingReceiver() *discovery.Receiver {
 	if s.deps.PlayingReceiver == nil {
@@ -770,11 +772,25 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 		}
 	}
 
-	ui.Column(c).Gap(8).Children(func() {
-		ui.Row(c).Gap(10).Children(func() {
-			sectionLabel(s.deps.Words, c, p, "LATENCY")
-		})
-
+	effective := cfg.EffectiveLatencyMs(s.adapted())
+	line := fmt.Sprintf(s.t("The engine will be asked for %d ms"), effective)
+	if cfg.LatencyAuto {
+		if effective > cfg.LatencyMs {
+			line += fmt.Sprintf(s.t(" · Auto raised it from your floor of %d ms"), cfg.LatencyMs)
+		} else {
+			line += s.t(" · Auto, at your floor")
+		}
+	}
+	if st.Phase == engine.PhaseStreaming {
+		line += " " + s.t("A new target applies to the next start.")
+	}
+	// The latency choice needs the full width of the settings card: its four
+	// labels are long, and squeezing them into the trailing column wraps every
+	// word into a vertical strip. The words sit above the control here, which is
+	// the same row, just allowed to breathe.
+	ui.Column(c).FillWidth().Gap(10).Children(func() {
+		sectionLabel(s.deps.Words, c, p, "LATENCY")
+		ui.Text(c, line).FontSize(sizeSmall).TextColor(p.InkMuted)
 		seg := ui.Segmented(c, &index, labels...)
 		if seg.Changed() {
 			if index == 0 {
@@ -789,23 +805,6 @@ func (s *Shell) latencyControl(c *ui.Context, p palette, cfg settings.Settings, 
 					s.deps.OnLatency(settings.NamedLatencyMs(choices[index-1]))
 				}
 			}
-		}
-
-		// What the engine will actually be asked for, so the control is never
-		// a mystery.
-		effective := cfg.EffectiveLatencyMs(s.adapted())
-		line := fmt.Sprintf(s.t("The engine will be asked for %d ms"), effective)
-		if cfg.LatencyAuto {
-			if effective > cfg.LatencyMs {
-				line += fmt.Sprintf(s.t(" · Auto raised it from your floor of %d ms"), cfg.LatencyMs)
-			} else {
-				line += s.t(" · Auto, at your floor")
-			}
-		}
-		ui.Text(c, line).FontSize(sizeSmall).TextColor(p.InkMuted)
-
-		if st.Phase == engine.PhaseStreaming {
-			ui.Text(c, s.t("A new target applies to the next start.")).FontSize(sizeSmall).TextColor(p.InkMuted)
 		}
 	})
 }
@@ -915,7 +914,10 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 		found = s.deps.Receivers()
 	}
 
-	ui.Column(c).FillWidth().Gap(14).Children(func() {
+	ui.Column(c).FillWidth().Gap(18).Children(func() {
+		s.pageHeading(c, p, s.t("Receivers"),
+			s.t("Choose a speaker. Play connects it; Disconnect ends the session."))
+
 		if len(found) == 0 {
 			ui.Text(c, s.t("Looking for receivers…")).FontSize(sizeBody).TextColor(p.Ink)
 			ui.Text(c, s.t("The PC and the HomePod have to be on the same network.")).
@@ -934,93 +936,133 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 			playingID = rec.ID
 		}
 
-		// One block, rounded and raised: the receivers are one list, and a list is
-		// one surface rather than rows laid straight on the page.
-		list := ui.Column(c).FillWidth().Radius(radiusBlock).Background(p.Surface).
-			Padding(4, 12).Shadow(0, 1, 3, 0, p.Shadow)
-		list.Children(func() {
+		ui.Column(c).FillWidth().Gap(12).Children(func() {
 			for _, r := range found {
 				rec := r
 				isPlaying := rec.ID == playingID && playingID != ""
-				row := ui.Row(c).FillWidth().Padding(12, 8).Gap(12)
-				row.Children(func() {
-					ui.Column(c).Gap(3).Children(func() {
-						ui.Row(c).Gap(8).Children(func() {
-							// An offline receiver's name steps back, so the list
-							// says what is reachable rather than only what was found.
-							nameInk := p.Ink
-							if !rec.Online {
-								nameInk = p.InkMuted
-							}
-							ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk)
-							if rec.IsGroup() && !rec.Complete() {
-								ui.Text(c, s.t("incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
-							}
-							if !rec.Online {
-								ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
-							}
-						})
-						detail := rec.Address
-						if name := discovery.DisplayModel(rec.Model); name != "" {
-							detail = name + " · " + rec.Address
-						}
-						if rec.IsGroup() {
-							detail = fmt.Sprintf(s.t("stereo · %d/2 · %s"), len(rec.Members), detail)
-						}
-						ui.Text(c, detail).FontSize(sizeSmall).TextColor(p.InkMuted)
-					})
+				s.receiverTile(c, p, cfg, rec, isPlaying)
+			}
+		})
 
-					ui.Spacer(c).Grow(1)
+		s.manualReceivers(c, p, cfg)
+	})
+}
 
-					// One control per row that matches what it would do. A row
-					// showing Play for the receiver that is already playing is a
-					// button that starts a second session the engine cannot run. The
-					// row above already states "incomplete" and "offline", so the two
-					// cases that only repeated them are gone.
-					switch {
-					case isPlaying:
-						// Disconnect, not Stop: what the button ends is the connection to
-						// this receiver, which is what the row above it says. "Stop" reads
-						// as pausing something that is playing, and the receiver stays
-						// connected either way.
-						if ui.Button(c, s.t("Disconnect")).Clicked() && s.deps.OnStop != nil {
-							s.deps.OnStop()
-						}
-					case !rec.Online:
-						// The tray panel says "offline" here, so this window does too:
-						// one app, one answer for the same device.
-						ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
-					case !rec.Complete():
-						// Half a stereo pair sounds wrong, so it is said rather than offered.
-						ui.Text(c, s.t("pair incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
-					default:
-						if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
-							s.deps.OnPlay(rec)
-						}
-					}
+// pageHeading is the one title a page needs: a clear name and a sentence that
+// says what the page is for. It is not a toolbar and does not repeat the window
+// title.
+func (s *Shell) pageHeading(c *ui.Context, p palette, title, detail string) {
+	ui.Column(c).FillWidth().Gap(6).Padding(0, 0, 6, 0).Children(func() {
+		ui.Text(c, title).FontSize(sizeTitle).Bold().TextColor(p.Ink)
+		ui.Text(c, detail).FontSize(sizeBody).TextColor(p.InkMuted)
+	})
+}
 
-					// The way to a receiver's own settings. Always there, rather than
-					// only once it has some: otherwise a receiver that has never been
-					// tuned could never be, and the first thing a user wants to change
-					// is the device they have just added.
-					if ui.Button(c, s.t("Tune")).Clicked() {
-						s.tuning = rec.ID
-					}
+// receiverTile is one speaker as a media object rather than a table row: a
+// product mark, a name, a state, and the one action that changes the state.
+// The playing tile opens to reveal its volume, so the control appears where the
+// session is, not in a distant settings table.
+func (s *Shell) receiverTile(c *ui.Context, p palette, cfg settings.Settings, rec discovery.Receiver, playing bool) {
+	status, statusColor := receiverStatus(s.deps.Words, p, rec, playing)
+	tile := ui.Column(c).FillWidth().Padding(16, 16).Gap(14).Radius(radiusTile).
+		Background(p.Surface).Shadow(0, 1, 2, 0, p.Shadow)
+	if playing {
+		tile.Background(p.SurfaceTint).BorderWidth(1).BorderStyle(ui.BorderSolid).
+			BorderColor(p.Accent.Alpha(0.55))
+	}
+	tile.Children(func() {
+		ui.Row(c).FillWidth().Gap(14).AlignItems(ui.Center).Children(func() {
+			speakerMark(c, p, 52, playing)
+			ui.Column(c).Grow(1).Shrink(1).Gap(3).Children(func() {
+				ui.Text(c, rec.Name).FontSize(sizeLead).Bold().TextColor(p.Ink).
+					Ellipsis("…").SingleLine()
+				ui.Row(c).Gap(7).AlignItems(ui.Center).Children(func() {
+					ui.Box(c).Width(7).Height(7).Radius(3.5).Background(statusColor)
+					ui.Text(c, status).FontSize(sizeSmall).TextColor(statusColor)
 				})
-				// A hairline between the rows of the list, the same one the
-				// platform puts between the rows of its own lists.
-				row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator)
+				ui.Text(c, s.receiverDetail(rec)).FontSize(sizeSmall).TextColor(p.InkMuted).
+					Ellipsis("…").SingleLine()
+			})
 
-				// What this receiver does for itself. It is shown once the receiver
-				// has a setting of its own, or while it is open, because a row per
-				// device for a setting nobody has changed says the same thing three
-				// times over and hides the one that is different.
-				if s.tuning == rec.ID || cfg.Options(rec.ID).HasOwn() {
-					s.receiverOptions(c, p, cfg, rec)
+			switch {
+			case playing:
+				if ui.Button(c, s.t("Disconnect")).Clicked() && s.deps.OnStop != nil {
+					s.deps.OnStop()
+				}
+			case !rec.Online:
+				ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
+			case !rec.Complete():
+				ui.Text(c, s.t("pair incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
+			default:
+				if ui.PrimaryButton(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
+					s.deps.OnPlay(rec)
 				}
 			}
 
-			s.manualReceivers(c, p, cfg)
+			if ui.Button(c, s.t("Tune")).Clicked() {
+				if s.tuning == rec.ID {
+					s.tuning = ""
+				} else {
+					s.tuning = rec.ID
+				}
+			}
+		})
+
+		if playing {
+			s.deviceVolume(c, p, rec)
+		}
+		if s.tuning == rec.ID || cfg.Options(rec.ID).HasOwn() {
+			s.receiverOptions(c, p, cfg, rec)
+		}
+	})
+}
+
+// receiverStatus is the one-line state of a speaker: connected is a fact, not
+// a phase, so it survives the moment between pressing Play and audio flowing.
+func receiverStatus(words i18n.Translator, p palette, rec discovery.Receiver, playing bool) (string, ui.Color) {
+	switch {
+	case playing:
+		return words.T("Connected"), p.Success
+	case !rec.Online:
+		return words.T("Offline"), p.InkMuted
+	case !rec.Complete():
+		return words.T("Pair incomplete"), p.Warning
+	default:
+		return words.T("Ready"), p.InkMuted
+	}
+}
+
+// receiverDetail is the second line under a speaker name.
+func (s *Shell) receiverDetail(rec discovery.Receiver) string {
+	detail := rec.Address
+	if name := discovery.DisplayModel(rec.Model); name != "" {
+		detail = name + " · " + rec.Address
+	}
+	if rec.IsGroup() {
+		detail = fmt.Sprintf(s.t("stereo · %d/2 · %s"), len(rec.Members), detail)
+	}
+	return detail
+}
+
+// deviceVolume is the volume of the connected speaker. The engine sets it on
+// the receiver, so it belongs beside the receiver rather than in a global
+// statistics card.
+func (s *Shell) deviceVolume(c *ui.Context, p palette, rec discovery.Receiver) {
+	st := s.deps.State.Snapshot()
+	vol := 1.0
+	if st.HasDeviceVolume {
+		vol = st.DeviceVolume
+	}
+	ui.Column(c).FillWidth().Gap(6).Children(func() {
+		ui.Row(c).FillWidth().Children(func() {
+			ui.Text(c, s.t("Volume")).FontSize(sizeSmall).TextColor(p.InkMuted)
+			ui.Spacer(c).Grow(1)
+			ui.Text(c, fmt.Sprintf("%.0f%%", vol*100)).FontSize(sizeSmall).TextColor(p.InkMuted)
+		})
+		ui.Slider(c, &vol, 0, 1).FillWidth().Label(s.t("Volume")).OnChange(func() {
+			if s.deps.OnDeviceVolume != nil {
+				s.deps.OnDeviceVolume(rec, vol)
+			}
 		})
 	})
 }
@@ -1034,7 +1076,7 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 // is tuned for whichever happened to be tuned last.
 func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings, rec discovery.Receiver) {
 	opts := cfg.Options(rec.ID)
-	effective := cfg.LatencyFor(rec.ID)
+	effective := cfg.AutoLatencyFor(rec.ID, s.adapted())
 	own := opts.LatencyMs != nil
 
 	// The modes, plus "use the global setting": a receiver that has set nothing
@@ -1055,8 +1097,13 @@ func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings,
 	}
 
 	ui.Column(c).FillWidth().Gap(10).Padding(22, 4, 4, 4).Children(func() {
-		ui.Row(c).FillWidth().Gap(14).Children(func() {
-			sectionLabel(s.deps.Words, c, p, "LATENCY")
+		ui.Column(c).FillWidth().Gap(8).Children(func() {
+			ui.Row(c).FillWidth().Children(func() {
+				sectionLabel(s.deps.Words, c, p, "LATENCY")
+				ui.Spacer(c).Grow(1)
+				ui.Text(c, fmt.Sprintf("%d ms%s", effective, ownSuffix(s.t, own))).
+					FontSize(sizeSmall).TextColor(p.InkMuted)
+			})
 			seg := ui.Segmented(c, &index, labels...)
 			if seg.Changed() && s.deps.OnReceiverOption != nil {
 				if index == 0 {
@@ -1070,8 +1117,6 @@ func (s *Shell) receiverOptions(c *ui.Context, p palette, cfg settings.Settings,
 						settings.NamedLatencyMs(choices[index-1]))
 				}
 			}
-			ui.Text(c, fmt.Sprintf("%d ms%s", effective, ownSuffix(s.t, own))).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
 		// Pairing, offered here rather than on the row.
@@ -1222,7 +1267,6 @@ func receiverName(name, host string) string {
 // one Windows calls default. A choice here is what such a machine needs, and
 // with one card there is nothing to choose and the default stands.
 func (s *Shell) captureEndpoint(c *ui.Context, p palette, cfg settings.Settings) {
-	sectionLabel(s.deps.Words, c, p, "AUDIO INPUT")
 	// What the engine records from. The system default is right on a machine with
 	// one sound card and wrong on one with two, where the PC's audio may be going
 	// through a device Windows does not call default.
@@ -1254,7 +1298,6 @@ func (s *Shell) captureEndpoint(c *ui.Context, p palette, cfg settings.Settings)
 }
 
 func (s *Shell) networkInterface(c *ui.Context, p palette, cfg settings.Settings) {
-	sectionLabel(s.deps.Words, c, p, "NETWORK")
 	// Which way out a browse takes. A machine with one adapter never needs this;
 	// one with a VPN up can find its receivers on only one of them.
 	ids, labels := []string{""}, []string{s.t("Automatic")}
@@ -1315,32 +1358,27 @@ func (s *Shell) devicePicker(c *ui.Context, p palette, d devicePicker) {
 		}
 	}
 
-	ui.Column(c).FillWidth().Gap(8).Children(func() {
-		ui.Text(c, d.note).FontSize(sizeSmall).TextColor(p.InkMuted)
-
-		// The chosen entry as the control's own label, so the row says which
-		// device is in use rather than only what sits beside it.
-		sel := ""
-		for i, id := range d.ids {
-			if id == chosen {
-				sel = d.labels[i]
-				break
-			}
+	sel := ""
+	for i, id := range d.ids {
+		if id == chosen {
+			sel = d.labels[i]
+			break
 		}
-		if ui.Combobox(c, &sel, d.labels).Label(d.label).FillWidth().Changed() {
-			for i, label := range d.labels {
-				if label == sel {
-					d.onPick(d.ids[i])
-					break
+	}
+	settingsRow(c, p, d.label, d.note, func() {
+		ui.Column(c).Width(240).Gap(4).Children(func() {
+			if ui.Combobox(c, &sel, d.labels).Label(d.label).FillWidth().Changed() {
+				for i, label := range d.labels {
+					if label == sel {
+						d.onPick(d.ids[i])
+						break
+					}
 				}
 			}
-		}
-
-		// What a change takes effect on, or nothing when the automatic entry is
-		// the one in use.
-		if chosen != "" {
-			ui.Text(c, d.unsetAs).FontSize(sizeSmall).TextColor(p.InkMuted)
-		}
+			if chosen != "" {
+				ui.Text(c, d.unsetAs).FontSize(sizeSmall).TextColor(p.InkMuted)
+			}
+		})
 	})
 }
 
@@ -1463,41 +1501,26 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 // have the setting.
 func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(26).Children(func() {
-		// The mode switch, which is the one setting that changes what the app
-		// costs to run.
-		card(c, p, 8, func() {
+		s.pageHeading(c, p, s.t("Settings"), s.t("Playback, network, and startup preferences."))
+
+		settingGroup(s.deps.Words, c, p, "PLAYBACK", func() {
 			light := cfg.Mode == settings.ModeLightweight
-			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, s.t("Lightweight mode")).FontSize(sizeBody).TextColor(p.Ink)
-				ui.Spacer(c).Grow(1)
-				ui.Switch(c, &light).OnChange(func() {
-					if s.deps.OnMode == nil {
-						return
-					}
-					if light {
-						s.deps.OnMode(settings.ModeLightweight)
-					} else {
-						s.deps.OnMode(settings.ModeStandard)
-					}
+			settingsRow(c, p, s.t("Lightweight mode"),
+				s.t("Samples the engine less often; audio is unchanged."), func() {
+					ui.Switch(c, &light).OnChange(func() {
+						if s.deps.OnMode == nil {
+							return
+						}
+						if light {
+							s.deps.OnMode(settings.ModeLightweight)
+						} else {
+							s.deps.OnMode(settings.ModeStandard)
+						}
+					})
 				})
-			})
-			ui.Text(c, s.t("Drops the window material and the trend chart, and samples the engine "+
-				"once a second. The audio path is untouched: the engine keeps its own process "+
-				"either way.")).FontSize(sizeSmall).TextColor(p.InkMuted)
-		})
-
-		// Latency. It belongs here rather than on Stats: it is a setting the
-		// user chooses once, not a reading they come back to. Stats shows what
-		// the current target is; this is where it is changed.
-		card(c, p, 8, func() {
+			settingsDivider(c, p)
 			s.latencyControl(c, p, cfg, st)
-		})
-
-		// The capture rate. The engine takes 44100 or 48000, and the pair is not
-		// interchangeable: a HomePod is asked for whichever the stream is at, and
-		// 48 kHz halves the work the engine does per second of audio.
-		card(c, p, 8, func() {
-			sectionLabel(s.deps.Words, c, p, "SAMPLE RATE")
+			settingsDivider(c, p)
 			rates := []int{44100, 48000}
 			labels := []string{"44.1 kHz", "48 kHz"}
 			index := 0
@@ -1506,119 +1529,82 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 					index = i
 				}
 			}
-			seg := ui.Segmented(c, &index, labels...)
-			if seg.Changed() && s.deps.OnSampleRate != nil {
-				s.deps.OnSampleRate(rates[index])
-			}
-			ui.Text(c, s.t("A new rate applies to the next stream.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
-		})
-
-		// Whether a launch by hand shows anything. The tray is the app's surface,
-		// so by default opening the panel is what a hand launch does: an app that
-		// starts invisible gives the user no way to know it is running.
-		card(c, p, 8, func() {
-			atLaunch := cfg.OpenAtLaunch
-			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, s.t("Show the window when I open the app")).FontSize(sizeBody).TextColor(p.Ink)
-				ui.Spacer(c).Grow(1)
-				ui.Switch(c, &atLaunch).OnChange(func() {
-					if s.deps.OnOpenAtLaunch != nil {
-						s.deps.OnOpenAtLaunch(atLaunch)
+			settingsRow(c, p, s.t("Sample rate"),
+				s.t("A new rate applies to the next stream."), func() {
+					seg := ui.Segmented(c, &index, labels...)
+					if seg.Changed() && s.deps.OnSampleRate != nil {
+						s.deps.OnSampleRate(rates[index])
 					}
 				})
-			})
-			ui.Text(c, s.t("Off by default: the app starts in the tray and opens its panel. "+
-				"Starting with the machine always stays quiet, here or not.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
 		})
 
-		// Starting with the machine. The desktop host does this through the same
-		// Run key, so the two are indistinguishable to the user.
-		card(c, p, 8, func() {
-			login := cfg.StartAtLogin
-			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, s.t("Start when I sign in")).FontSize(sizeBody).TextColor(p.Ink)
-				ui.Spacer(c).Grow(1)
-				ui.Switch(c, &login).OnChange(func() {
-					if s.deps.OnStartAtLogin != nil {
-						s.deps.OnStartAtLogin(login)
-					}
-				})
-			})
-			ui.Text(c, s.t("The shell starts in the tray at sign-in and connects to the "+
-				"last receiver, so nothing has to be opened.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
-		})
-
-		// The adapter mDNS browses on. Nothing else in the app asks which way out
-		// the browsing should take, and on a machine with a VPN up that is the
-		// difference between finding the HomePod and finding nothing.
-		s.networkInterface(c, p, cfg)
-
-		// What the engine records from. It is the system's default by default,
-		// which is right for a machine with one sound card; a machine with two
-		// is where the choice matters.
-		s.captureEndpoint(c, p, cfg)
-
-		// Silencing the local speakers while streaming. The desktop host does
-		// this by default, and it is what a user expects: the sound is going to
-		// the HomePod.
-		card(c, p, 8, func() {
+		settingGroup(s.deps.Words, c, p, "AUDIO", func() {
 			mute := cfg.MuteWhileStreaming
-			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, s.t("Mute the PC speakers while streaming")).FontSize(sizeBody).TextColor(p.Ink)
-				ui.Spacer(c).Grow(1)
-				ui.Switch(c, &mute).OnChange(func() {
-					if s.deps.OnMuteWhileStreaming != nil {
-						s.deps.OnMuteWhileStreaming(mute)
-					}
-				})
-			})
-			ui.Text(c, s.t("The sound is being sent to the HomePod, so playing it here too would "+
-				"be the same voice twice, one delayed behind the other.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
-		})
-
-		// Reconnecting a session that drops. Off by default, because reaching for
-		// a speaker again on its own is something to ask for rather than assume.
-		card(c, p, 8, func() {
-			reconnect := cfg.Reconnect
-			ui.Row(c).FillWidth().Children(func() {
-				ui.Text(c, s.t("Reconnect a dropped stream")).FontSize(sizeBody).TextColor(p.Ink)
-				ui.Spacer(c).Grow(1)
-				ui.Switch(c, &reconnect).OnChange(func() {
-					if s.deps.OnReconnect != nil {
-						s.deps.OnReconnect(reconnect)
-					}
-				})
-			})
-			ui.Text(c, s.t("When the connection drops, start it again. Each retry waits "+
-				"twice as long as the one before, up to eight seconds, and a stream that "+
-				"ran for ten seconds starts the count over. A HomePod that asks for a PIN "+
-				"is not retried: that needs you.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
-
-			if cfg.Reconnect {
-				attempts := float64(cfg.ReconnectAttempts)
-				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, s.t("Attempts")).FontSize(sizeSmall).TextColor(p.InkMuted)
-					ui.Slider(c, &attempts, 1, 20).Grow(1).Label(s.t("Attempts")).OnChange(func() {
-						if s.deps.OnReconnectAttempts != nil {
-							s.deps.OnReconnectAttempts(int(attempts))
+			settingsRow(c, p, s.t("Mute the PC speakers while streaming"),
+				s.t("Avoids hearing the same audio twice."), func() {
+					ui.Switch(c, &mute).OnChange(func() {
+						if s.deps.OnMuteWhileStreaming != nil {
+							s.deps.OnMuteWhileStreaming(mute)
 						}
 					})
-					ui.Text(c, fmt.Sprintf("%d", int(attempts))).FontSize(sizeSmall).
-						TextColor(p.Ink)
+				})
+			settingsDivider(c, p)
+			s.captureEndpoint(c, p, cfg)
+		})
+
+		settingGroup(s.deps.Words, c, p, "NETWORK", func() {
+			s.networkInterface(c, p, cfg)
+		})
+
+		settingGroup(s.deps.Words, c, p, "BEHAVIOR", func() {
+			atLaunch := cfg.OpenAtLaunch
+			settingsRow(c, p, s.t("Show the window when I open the app"),
+				s.t("Otherwise the app opens its tray panel."), func() {
+					ui.Switch(c, &atLaunch).OnChange(func() {
+						if s.deps.OnOpenAtLaunch != nil {
+							s.deps.OnOpenAtLaunch(atLaunch)
+						}
+					})
+				})
+			settingsDivider(c, p)
+			login := cfg.StartAtLogin
+			settingsRow(c, p, s.t("Start when I sign in"),
+				s.t("Starts quietly in the tray."), func() {
+					ui.Switch(c, &login).OnChange(func() {
+						if s.deps.OnStartAtLogin != nil {
+							s.deps.OnStartAtLogin(login)
+						}
+					})
+				})
+			settingsDivider(c, p)
+			reconnect := cfg.Reconnect
+			settingsRow(c, p, s.t("Reconnect a dropped stream"),
+				s.t("Retries with a growing delay."), func() {
+					ui.Switch(c, &reconnect).OnChange(func() {
+						if s.deps.OnReconnect != nil {
+							s.deps.OnReconnect(reconnect)
+						}
+					})
+				})
+			if cfg.Reconnect {
+				settingsDivider(c, p)
+				attempts := float64(cfg.ReconnectAttempts)
+				settingsRow(c, p, s.t("Attempts"), "", func() {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Slider(c, &attempts, 1, 20).Width(160).Label(s.t("Attempts")).
+							OnChange(func() {
+								if s.deps.OnReconnectAttempts != nil {
+									s.deps.OnReconnectAttempts(int(attempts))
+								}
+							})
+						ui.Text(c, fmt.Sprintf("%d", int(attempts))).FontSize(sizeSmall).
+							TextColor(p.Ink)
+					})
 				})
 			}
 		})
 
-		// The language. System follows the machine, which is what most people
-		// want; the other two are there for a machine set to one language and a
-		// user who reads another.
-		card(c, p, 8, func() {
-			sectionLabel(s.deps.Words, c, p, "LANGUAGE")
+		settingGroup(s.deps.Words, c, p, "LANGUAGE", func() {
 			langs := []string{string(i18n.System), string(i18n.English), string(i18n.Chinese)}
 			labels := []string{s.t("System"), "English", "中文"}
 			index := 0
@@ -1627,23 +1613,14 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 					index = i
 				}
 			}
-			seg := ui.Segmented(c, &index, labels...).Label(s.t("LANGUAGE"))
-			if seg.Changed() && s.deps.OnLanguage != nil && langs[index] != cfg.Language {
-				s.deps.OnLanguage(langs[index])
-			}
+			settingsRow(c, p, s.t("Language"), "", func() {
+				seg := ui.Segmented(c, &index, labels...).Label(s.t("LANGUAGE"))
+				if seg.Changed() && s.deps.OnLanguage != nil && langs[index] != cfg.Language {
+					s.deps.OnLanguage(langs[index])
+				}
+			})
 		})
 
-		ui.Column(c).Gap(6).Children(func() {
-			ui.Text(c, s.t("Closing the window")).FontSize(sizeBody).TextColor(p.Ink)
-			ui.Text(c, s.t("Closing releases the window and everything it holds. Playback continues: "+
-				"the engine is a separate process, and the app stays in the tray.")).
-				FontSize(sizeSmall).TextColor(p.InkMuted)
-		})
-
-		// Every setting here is written as it is changed, so there is nothing
-		// to save and no button to press. What is worth saying is when a write
-		// failed: the control moves and the interface changes, so without this
-		// the only sign would be the setting being gone at the next launch.
 		if err := s.deps.Settings.WriteErr(); err != nil {
 			ui.Text(c, fmt.Sprintf(s.t("Settings could not be saved: %v"), err)).
 				FontSize(sizeSmall).TextColor(p.Danger)
