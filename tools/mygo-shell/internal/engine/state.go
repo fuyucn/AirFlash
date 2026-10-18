@@ -137,7 +137,11 @@ type Metrics struct {
 	// dragged.
 	DeviceVolume    float64
 	HasDeviceVolume bool
+	// DeviceVolumeErr and EqualizerErr are the engine's refusal of the last
+	// command of that kind. Without them a slider that the engine rejected
+	// moves and says nothing, which reads as the control not working.
 	DeviceVolumeErr string
+	EqualizerErr    string
 
 	// Reconnecting is set while a dropped session is being retried, with the
 	// attempt and the total. The engine has no part in this: the retry is the
@@ -409,6 +413,28 @@ func (s *State) Apply(ev Event) {
 		s.metrics.Pairing = false
 		s.metrics.PairingOn = ""
 		s.metrics.Phase = PhaseNegotiating
+	case "device_volume_error":
+		// The command was rejected outright - a volume outside the range the
+		// engine accepts. It is said rather than logged, because the control
+		// that sent it is on screen.
+		var e struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(ev.Raw, &e) == nil {
+			s.metrics.DeviceVolumeErr = e.Message
+		}
+
+	case "equalizer_error":
+		// An equalizer the engine would not apply. The sliders show the curve
+		// the user set; without this they would show a curve that is not being
+		// heard.
+		var e struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(ev.Raw, &e) == nil {
+			s.metrics.EqualizerErr = e.Message
+		}
+
 	case "device_volume":
 		// The receiver's own volume, read back after a change and once a second.
 		// The slider is drawn from this, so without it the control shows what

@@ -165,4 +165,6 @@ var chinese = map[string]string{
 	"44.1 kHz":                               "44.1 kHz",
 	"48 kHz":                                 "48 kHz",
 	"Settings could not be saved: %v":        "设置无法保存：%v",
+	"The speaker refused the volume: %s":     "音箱拒绝了音量设置：%s",
+	"The equalizer was not applied: %s":      "均衡器未生效：%s",
 }

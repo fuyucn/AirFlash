@@ -559,3 +559,41 @@ func TestAnUnavailableDeviceVolumeIsNotClaimed(t *testing.T) {
 		t.Error("a volume that was not available was claimed")
 	}
 }
+
+func TestARefusedVolumeIsRecordedRatherThanDropped(t *testing.T) {
+	// The engine answers a volume it will not accept with device_volume_error.
+	// Nothing read it, so the slider moved, the audio did not, and nothing said
+	// why - a control that looks broken rather than refused.
+	st := NewState()
+	st.Apply(Event{Event: "device_volume_error", Raw: []byte(
+		`{"event":"device_volume_error","message":"invalid device volume command"}`)})
+
+	if got := st.Snapshot().DeviceVolumeErr; got != "invalid device volume command" {
+		t.Errorf("device volume error = %q, want it kept", got)
+	}
+}
+
+func TestARefusedEqualizerIsRecordedRatherThanDropped(t *testing.T) {
+	// Same shape: the curve is drawn whether or not the engine took it.
+	st := NewState()
+	st.Apply(Event{Event: "equalizer_error", Raw: []byte(
+		`{"event":"equalizer_error","message":"equalizer updates require a live streaming session"}`)})
+
+	if got := st.Snapshot().EqualizerErr; got == "" {
+		t.Error("the refused equalizer was dropped, so the sliders would show a curve nobody hears")
+	}
+}
+
+func TestAnAcceptedVolumeClearsAnEarlierRefusal(t *testing.T) {
+	// The message is about the last command, not a permanent state: once the
+	// speaker accepts one, the warning has to go.
+	st := NewState()
+	st.Apply(Event{Event: "device_volume_error", Raw: []byte(
+		`{"event":"device_volume_error","message":"invalid device volume command"}`)})
+	st.Apply(Event{Event: "device_volume", Raw: []byte(
+		`{"event":"device_volume","volume":0.5,"available":true}`)})
+
+	if got := st.Snapshot().DeviceVolumeErr; got != "" {
+		t.Errorf("the refusal outlived an accepted command: %q", got)
+	}
+}

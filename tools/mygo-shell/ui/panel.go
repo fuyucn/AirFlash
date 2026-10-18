@@ -252,6 +252,7 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 			// device-volume command addresses the session, and a session is one
 			// receiver, so a slider anywhere else would do nothing.
 			p.volumeRow(c, pal, rec)
+			p.commandErrors(c, pal, p.deps.State.Snapshot())
 			p.silenceRow(c, pal, p.deps.State.Snapshot())
 		}
 	})
@@ -319,6 +320,23 @@ func digitsOnly(pin string) bool {
 		}
 	}
 	return true
+}
+
+// commandErrors says when the engine refused a control the user moved.
+//
+// A slider that moves and is then rejected looks exactly like a slider that
+// works: the value is on screen, the audio is unchanged, and nothing says why.
+// The engine sends a refusal for both of these; it is shown where the control
+// is, in the warning colour, until the next command succeeds.
+func (p *Panel) commandErrors(c *ui.Context, pal palette, st engine.Metrics) {
+	if st.DeviceVolumeErr != "" {
+		ui.Text(c, fmt.Sprintf(p.t("The speaker refused the volume: %s"), st.DeviceVolumeErr)).
+			FontSize(sizeSmall).TextColor(pal.Warning)
+	}
+	if st.EqualizerErr != "" {
+		ui.Text(c, fmt.Sprintf(p.t("The equalizer was not applied: %s"), st.EqualizerErr)).
+			FontSize(sizeSmall).TextColor(pal.Warning)
+	}
 }
 
 // silenceRow says that the PC is sending no sound at all.
