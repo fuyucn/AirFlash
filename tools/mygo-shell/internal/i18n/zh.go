@@ -180,4 +180,5 @@ var chinese = map[string]string{
 	"ms":                                     "毫秒",
 	"TARGET %d MS":                           "目标 %d 毫秒",
 	"The receiver's feedback is late, which is what a rising ping looks like.": "接收端的反馈来晚了，这正是延迟升高时的样子。",
+	"Open AirFlash": "打开 AirFlash",
 }

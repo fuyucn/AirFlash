@@ -11,6 +11,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/i18n"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
 	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
@@ -604,5 +605,30 @@ func TestAStreamThatCouldNotStartIsNotLeftConnecting(t *testing.T) {
 	}
 	if got := app.state.LastError(); got != "could not start the stream" {
 		t.Errorf("last error = %q, want the start failure", got)
+	}
+}
+
+func TestTheTrayMenuIsDrawnInTheChosenLanguage(t *testing.T) {
+	// The tray menu is the one surface drawn outside the ui package, and it was
+	// written with English labels. A Chinese interface therefore had an English
+	// menu over it - the two most visible items being the page names.
+	cfg := settings.Open("/tmp/airflash-tray-lang.json")
+	cfg.Update(func(s *settings.Settings) { s.Language = string(i18n.Chinese) })
+	app := &App{settings: cfg, state: engine.NewState()}
+
+	labels := map[string]bool{}
+	for _, item := range app.trayMenuItems().Items() {
+		if item.Label != "" {
+			labels[item.Label] = true
+		}
+	}
+	if labels["Stats"] || labels["Settings"] || labels["Quit"] {
+		t.Errorf("the menu is still English: %v", labels)
+	}
+	// And the translated labels are the ones it shows.
+	for _, want := range []string{"状态", "设置", "退出"} {
+		if !labels[want] {
+			t.Errorf("the menu has no %q item: %v", want, labels)
+		}
 	}
 }

@@ -52,7 +52,21 @@ func translatedKeys(root string) ([]string, error) {
 
 	seen := map[string]bool{}
 	var out []string
-	err := filepath.Walk(filepath.Join(root, "ui"), func(path string, info os.FileInfo, err error) error {
+	// The ui package draws the surfaces; main.go draws the tray menu, which is
+	// also translated and is the one place outside ui that reaches a person.
+	dirs := []string{filepath.Join(root, "ui"), root}
+	for _, dir := range dirs {
+		err := scanDir(dir, call, part, seen, &out)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// scanDir collects the keys in one directory's non-test Go files.
+func scanDir(dir string, call, part *regexp.Regexp, seen map[string]bool, out *[]string) error {
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") ||
 			strings.HasSuffix(path, "_test.go") {
 			return err
@@ -60,6 +74,11 @@ func translatedKeys(root string) ([]string, error) {
 		src, err := os.ReadFile(path)
 		if err != nil {
 			return err
+		}
+		// Only main.go in the root: the other files there are not drawn.
+		if dir == filepath.Dir(filepath.Join(dir, "x")) && filepath.Dir(path) == dir &&
+			filepath.Base(path) != "main.go" {
+			return nil
 		}
 		for _, m := range call.FindAllStringSubmatch(string(src), -1) {
 			var b strings.Builder
@@ -69,10 +88,10 @@ func translatedKeys(root string) ([]string, error) {
 			key := b.String()
 			if key != "" && !seen[key] {
 				seen[key] = true
-				out = append(out, key)
+				*out = append(*out, key)
 			}
 		}
 		return nil
 	})
-	return out, err
+	return err
 }

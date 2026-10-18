@@ -629,12 +629,16 @@ func (a *App) showTrayMenu(tray trayMenuHost) {
 
 // trayMenuItems is the right-click menu: the way to the window and the way out.
 func (a *App) trayMenuItems() *mygo.Menu {
+	// The menu is drawn in the language the rest of the app is, so a Chinese
+	// user does not get an English menu over a Chinese panel.
+	words := i18n.For(a.settings.Current().Lang())
+
 	items := []*mygo.MenuItem{}
 	if runtime.GOOS == "linux" {
 		// A tray icon on Linux reports no click at all, so the left click that
 		// opens the panel elsewhere is an item here.
 		items = append(items, &mygo.MenuItem{
-			Label: "Open AirFlash",
+			Label: words.T("Open AirFlash"),
 			Click: func(*mygo.MenuItem, *mygo.Window) { a.togglePanel() },
 		}, mygo.Separator())
 	}
@@ -649,9 +653,9 @@ func (a *App) trayMenuItems() *mygo.Menu {
 		}}
 	}
 	return mygo.NewMenu(append(items,
-		window("stats", "Stats"), window("settings", "Settings"),
+		window("stats", words.T("Stats")), window("settings", words.T("Settings")),
 		mygo.Separator(),
-		&mygo.MenuItem{Label: "Quit", Click: func(*mygo.MenuItem, *mygo.Window) {
+		&mygo.MenuItem{Label: words.T("Quit"), Click: func(*mygo.MenuItem, *mygo.Window) {
 			mygo.App.Quit()
 		}},
 	))
