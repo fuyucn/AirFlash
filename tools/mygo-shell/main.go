@@ -188,7 +188,12 @@ func (a *App) run() {
 	a.life.OnClose(func(shell.Surface) {
 		// Releasing the window is all that happens here. The engine is not
 		// touched: playback must survive the window being closed.
-		if w := a.win.Swap(nil); w != nil {
+		//
+		// The handle is swapped out and destroyed. This hook runs when the
+		// program itself closes the window to rebuild it - a mode or language
+		// change - and that window has not been torn down by the platform, so
+		// leaving it alive would put a second window on screen at the next open.
+		if w := a.win.Swap(nil); w != nil && !w.IsDestroyed() {
 			w.Destroy()
 		}
 		a.view.Store(nil)
@@ -547,6 +552,14 @@ func (a *App) openWindow(page string) {
 		a.life.Close()
 		// Nothing is quit here: a tray app stays resident with no window, and
 		// the engine keeps playing.
+	})
+	// The platform has finished tearing the window down by the time this runs,
+	// so this only forgets the handle. Nothing is destroyed here: it already
+	// is. A quit can close the same window the user did, so the compare-and-swap
+	// makes the second close a no-op rather than a pointer to a dead window.
+	w.OnClosed(func() {
+		a.win.CompareAndSwap(w, nil)
+		a.view.Store(nil)
 	})
 	a.win.Store(w)
 }

@@ -558,3 +558,29 @@ func TestAskingForAPageWithNoWindowIsHarmless(t *testing.T) {
 		t.Error("showPage created a view with no window")
 	}
 }
+
+func TestAClosedWindowLeavesNoViewBehind(t *testing.T) {
+	// A rebuild closes the window and opens a new one. If the close left the old
+	// view in place, the next request that moves the page would move a view no
+	// window is drawing, and the window that is up would not follow the menu.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-close-view.json"),
+		state:    engine.NewState(),
+	}
+	view := appui.New(appui.Deps{
+		State:    app.state,
+		Settings: app.settings,
+		Life:     shell.New(),
+	})
+	app.view.Store(view)
+
+	app.view.Store(nil)
+
+	if app.view.Load() != nil {
+		t.Fatal("a closed window left its view behind")
+	}
+	app.showPage("stats")
+	if app.view.Load() != nil {
+		t.Error("showPage created a view after the window was closed")
+	}
+}
