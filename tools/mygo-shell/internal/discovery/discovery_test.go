@@ -384,3 +384,33 @@ func TestDevicesAtDifferentAddressesStaySeparateReceivers(t *testing.T) {
 		t.Errorf("%d receivers, want 2", len(got))
 	}
 }
+
+func TestADeviceKeepsItsIdentityWhenItsTXTArrivesLate(t *testing.T) {
+	// A browse can catch a device's AirPlay service before its TXT record, so the
+	// first record has no deviceid and folds under its address. The RAOP record
+	// that follows does carry one. They fold into one receiver, which is right -
+	// but the id stayed the address, and the id is the key every per-receiver
+	// setting is stored under. A device whose TXT arrives late is then a
+	// different device to the settings than the same device with its TXT: the
+	// user's latency and volume for it are gone.
+	late := Fold([]Record{
+		{Instance: "Living Room", Type: ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"model": "AudioAccessory1,1"}},
+		{Instance: "42FB06B510BD@Living Room", Type: ServiceRAOP, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "42FB06B510BD", "cn": "0,1"}},
+	})
+	full := Fold([]Record{
+		{Instance: "Living Room", Type: ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "42FB06B510BD", "model": "AudioAccessory1,1"}},
+		{Instance: "42FB06B510BD@Living Room", Type: ServiceRAOP, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "42FB06B510BD", "cn": "0,1"}},
+	})
+
+	if len(late) != 1 || len(full) != 1 {
+		t.Fatalf("folded %d and %d receivers, want one each", len(late), len(full))
+	}
+	if late[0].ID != full[0].ID {
+		t.Errorf("the same speaker has id %q when its TXT is late and %q when it is not: its settings would not follow it",
+			late[0].ID, full[0].ID)
+	}
+}

@@ -99,19 +99,41 @@ func Fold(records []Record) []Receiver {
 		// and folding them apart leaves the same name listed twice with a Play
 		// for each. The address is the one thing every record of a device agrees
 		// on, so it decides when the ids do not.
-		if id != endpoint(rec) {
-			if seen, ok := byAddress[rec.Address]; ok {
-				id = seen
-			}
-		}
-		d, ok := byID[id]
-		if !ok {
-			d = &device{id: id}
-			byID[id] = d
+		//
+		// The stronger of the two ids wins. The id is the key every per-receiver
+		// setting is stored under, so a speaker whose TXT arrives after the
+		// record that only located it must not become a different speaker to the
+		// settings: its address-keyed entry is upgraded to the name that has just
+		// arrived.
+		prev, seen := byAddress[rec.Address]
+		switch {
+		case !seen:
 			byAddress[rec.Address] = id
+		case prev == id:
+			// Already folded under this id.
+		case weaker(prev, id):
+			// A real id arrived for a device that was only located before.
+			if existing, have := byID[prev]; have {
+				existing.id = id
+				byID[id] = existing
+				delete(byID, prev)
+				for i, o := range order {
+					if o == prev {
+						order[i] = id
+						break
+					}
+				}
+			}
+			byAddress[rec.Address] = id
+		case !weaker(id, prev):
+			// Two real ids for one address: the first stays, as before.
+			id = prev
+		}
+		if _, ok := byID[id]; !ok {
+			byID[id] = &device{id: id}
 			order = append(order, id)
 		}
-		d.records = append(d.records, rec)
+		byID[id].records = append(byID[id].records, rec)
 	}
 
 	pairs := map[string][]*device{}
@@ -319,6 +341,17 @@ func parseDecimal(s string) (int, bool) {
 
 // identity is the device id, which is what tells two advertisements of one
 // device apart from two devices.
+// weaker reports whether id a is a fallback identity and b a real one.
+//
+// A fallback is the endpoint the record was reached at - "10.0.10.31:7000" -
+// which says where the device is, not what it is. A real id is the device's own,
+// normalised. Upgrading is what keeps a speaker's per-receiver settings attached
+// to it when the record that names it arrives after the one that only locates
+// it.
+func weaker(a, b string) bool {
+	return strings.Contains(a, ":") && !strings.Contains(b, ":")
+}
+
 func identity(rec Record) string {
 	if id := strings.TrimSpace(rec.TXT["deviceid"]); id != "" {
 		return Normalize(id)
