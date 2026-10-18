@@ -632,3 +632,16 @@ func TestTheTrayMenuIsDrawnInTheChosenLanguage(t *testing.T) {
 		}
 	}
 }
+
+func TestThePanelGetsEveryDependencyItReads(t *testing.T) {
+	// The panel read PlayingReceiver and the app did not pass it, so the call was
+	// on a nil func: a panic the first time the panel opened with a receiver in
+	// the list. Comparing the fields the panel reads with the fields the app
+	// passes is what catches the next one, because a missing func is invisible
+	// until the branch that uses it runs.
+	app := &App{settings: settings.Open("/tmp/airflash-panel-deps.json"), state: engine.NewState()}
+	d := app.panelDeps()
+	if d.PlayingReceiver == nil {
+		t.Error("the panel was given no PlayingReceiver, so its receiver list panics")
+	}
+}

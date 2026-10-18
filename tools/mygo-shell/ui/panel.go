@@ -174,8 +174,10 @@ func (p *Panel) receivers(c *ui.Context, pal palette, st engine.Metrics) {
 	// the one under way. So the receiver the app is playing to is the answer,
 	// whatever phase it is in.
 	playingID := ""
-	if rec := p.deps.PlayingReceiver(); rec != nil {
-		playingID = rec.ID
+	if p.deps.PlayingReceiver != nil {
+		if rec := p.deps.PlayingReceiver(); rec != nil {
+			playingID = rec.ID
+		}
 	}
 
 	ui.Column(c).FillWidth().Gap(0).Children(func() {

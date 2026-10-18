@@ -980,3 +980,27 @@ func TestEverySliderHasAnAccessibleName(t *testing.T) {
 		}
 	}
 }
+
+func TestThePanelWithoutAPlayingReceiverLookupDoesNotPanic(t *testing.T) {
+	// The panel asks its dependencies which receiver is playing. The app passed
+	// every dependency except that one, so the call was on a nil func - a panic
+	// the moment the panel opened with a receiver in the list, which is the
+	// first thing a user sees.
+	//
+	// A nil lookup is allowed to mean "nothing is playing", but it must not
+	// crash: the panel is opened before any session exists.
+	rec := receiver("AA", "Living Room", "10.0.10.31")
+	panel := NewPanel(Deps{
+		State:     engine.NewState(),
+		Settings:  settings.Open("/tmp/airflash-panel-nil.json"),
+		Life:      shell.New(),
+		Receivers: func() []discovery.Receiver { return []discovery.Receiver{rec} },
+	})
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("the panel panicked with no PlayingReceiver: %v", r)
+		}
+	}()
+	ui.NewTester(panel.View, panelWidth, 600).Frame()
+}

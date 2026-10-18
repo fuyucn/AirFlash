@@ -758,16 +758,21 @@ func (a *App) togglePanel() {
 	a.flyout.Store(w)
 }
 
-// panelView builds the panel with the app's callbacks.
-func (a *App) panelView() *appui.Panel {
-	return appui.NewPanel(appui.Deps{
-		Words:     i18n.For(a.settings.Current().Lang()),
-		State:     a.state,
-		Settings:  a.settings,
-		Life:      a.life,
-		Receivers: a.Receivers,
-		OnPlay:    a.playReceiver,
-		OnStop:    a.stopStream,
+// panelDeps is everything the tray panel reads and calls.
+//
+// It is separate from panelView so a test can check the wiring: a dependency the
+// panel reads but the app never passes is a nil func, and the panic only happens
+// on the branch that uses it - the panel opening with a receiver in the list.
+func (a *App) panelDeps() appui.Deps {
+	return appui.Deps{
+		Words:           i18n.For(a.settings.Current().Lang()),
+		State:           a.state,
+		Settings:        a.settings,
+		Life:            a.life,
+		Receivers:       a.Receivers,
+		PlayingReceiver: a.PlayingReceiver,
+		OnPlay:          a.playReceiver,
+		OnStop:          a.stopStream,
 		OnGain: func(g float64) {
 			a.settings.Update(func(s *settings.Settings) { s.Gain = g })
 			if c := a.client.Load(); c != nil {
@@ -778,7 +783,12 @@ func (a *App) panelView() *appui.Panel {
 		OnPairPin:      a.pairPin,
 		OnOpenWindow:   a.openWindow,
 		OnQuit:         func() { mygo.App.Quit() },
-	})
+	}
+}
+
+// panelView builds the panel with the app's callbacks.
+func (a *App) panelView() *appui.Panel {
+	return appui.NewPanel(a.panelDeps())
 }
 
 // applyMute silences or restores the PC's own speakers, as the setting asks.
