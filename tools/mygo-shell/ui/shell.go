@@ -1343,7 +1343,7 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 
 	ui.Column(c).FillWidth().Gap(24).Children(func() {
 		// On or off, and the preset.
-		ui.Column(c).Gap(10).Children(func() {
+		card(c, p, 10, func() {
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Equalizer")).FontSize(sizeBody).TextColor(p.Ink)
 				ui.Spacer(c).Grow(1)
@@ -1388,7 +1388,7 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 
 		// Preamp, and then the bands.
 		preamp := eq.PreampDB
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Preamp")).FontSize(sizeSmall).TextColor(p.Ink)
 				ui.Spacer(c).Grow(1)
@@ -1404,7 +1404,7 @@ func (s *Shell) equalizerPage(c *ui.Context, p palette, cfg settings.Settings) {
 		})
 
 		// The ten bands, each labelled with its frequency.
-		ui.Column(c).FillWidth().Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			for i := range equalizer.Frequencies {
 				band := eq.BandGainsDB[i]
 				ui.Row(c).FillWidth().Gap(12).AlignItems(ui.Center).Children(func() {
