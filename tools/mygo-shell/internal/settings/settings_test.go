@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/equalizer"
 )
 
 func TestDefaultsTargetFiveHundredMilliseconds(t *testing.T) {
@@ -821,5 +823,31 @@ func TestAPanickingCallbackDoesNotLockTheStoreForever(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the store is locked forever after a panicking callback")
+	}
+}
+
+func TestAnOutOfRangeEqualizerIsClampedOnLoad(t *testing.T) {
+	// normalized checks the band slice's length and nothing else, so a settings
+	// file with a gain of 999 or a preamp of 100 was sent to the engine as it
+	// stood. The engine validates -12..=12 and refuses the whole equalizer, so
+	// the curve the user sees is not the curve being heard - and a hand-edited
+	// file, or one from a build with a different limit, is enough to do it.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	raw := `{"equalizer":{"enabled":true,"preamp_db":100,
+	  "band_gains_db":[999,0,0,0,0,0,0,0,0,-999]}}`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	eq := Open(path).Current().Equalizer
+	if eq.PreampDB != equalizer.LimitDB {
+		t.Errorf("preamp = %v, want it clamped to %v", eq.PreampDB, float64(equalizer.LimitDB))
+	}
+	if eq.BandGainsDB[0] != equalizer.LimitDB {
+		t.Errorf("band 0 = %v, want %v", eq.BandGainsDB[0], float64(equalizer.LimitDB))
+	}
+	if eq.BandGainsDB[9] != -equalizer.LimitDB {
+		t.Errorf("band 9 = %v, want %v", eq.BandGainsDB[9], float64(-equalizer.LimitDB))
 	}
 }

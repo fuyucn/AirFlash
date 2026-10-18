@@ -380,6 +380,9 @@ func (s Settings) normalized() Settings {
 		// behind: every band read would panic.
 		s.Equalizer = equalizer.Default()
 	}
+	// The count is right, so clamp what is in it: a file can hold a gain the
+	// engine refuses, and sending it makes the engine drop the whole curve.
+	s.Equalizer.Clamp()
 	if s.Language == "" {
 		s.Language = string(i18n.System)
 	}

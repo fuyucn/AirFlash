@@ -477,7 +477,10 @@ func (a *App) openWindow(page string) {
 			a.sendEqualizer()
 		},
 		OnEqualizerPreamp: func(db float64) {
-			a.settings.Update(func(s *settings.Settings) { s.Equalizer.PreampDB = clampDB(db) })
+			a.settings.Update(func(s *settings.Settings) {
+				s.Equalizer.PreampDB = db
+				s.Equalizer.Clamp()
+			})
 			a.sendEqualizer()
 		},
 		OnLanguage: func(lang string) {
@@ -1161,18 +1164,6 @@ func (a *App) sendEqualizer() {
 	if _, err := c.SetEqualizer(a.settings.Current().Equalizer); err != nil {
 		log.Printf("set equalizer: %v", err)
 	}
-}
-
-// clampDB keeps a gain inside what the engine validates, so a slider dragged
-// past the edge does not fail on the engine afterwards.
-func clampDB(db float64) float64 {
-	if db > equalizer.LimitDB {
-		return equalizer.LimitDB
-	}
-	if db < -equalizer.LimitDB {
-		return -equalizer.LimitDB
-	}
-	return db
 }
 
 // checkQuit runs the quit path once and exits.

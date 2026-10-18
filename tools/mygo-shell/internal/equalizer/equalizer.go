@@ -117,6 +117,31 @@ func (s *Settings) SetBand(index int, db float64) {
 	s.Enabled = true
 }
 
+// Clamp keeps every value inside what the engine validates: the preamp and each
+// band within -LimitDB..=LimitDB.
+//
+// It is the one place the rule is written. The sliders clamp what they send, but
+// a settings file can hold anything - a hand edit, a build with a different
+// limit - and normalized() only checked the band count, so an out-of-range curve
+// went to the engine as it stood and the engine refused the whole equalizer.
+// The curve on screen was then not the curve being heard.
+func (s *Settings) Clamp() {
+	s.PreampDB = clampDB(s.PreampDB)
+	for i := range s.BandGainsDB {
+		s.BandGainsDB[i] = clampDB(s.BandGainsDB[i])
+	}
+}
+
+func clampDB(db float64) float64 {
+	if db > LimitDB {
+		return LimitDB
+	}
+	if db < -LimitDB {
+		return -LimitDB
+	}
+	return db
+}
+
 // Label is one band as the interface shows it: the frequency, spelled the way an
 // audio tool spells it.
 func Label(i int) string {
