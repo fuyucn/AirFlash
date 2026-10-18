@@ -780,3 +780,41 @@ func TestAFailedStartIsRetriedWhenReconnectIsOn(t *testing.T) {
 		t.Error("a failed start was retried with reconnect off")
 	}
 }
+
+func TestAStopEndsTheBackoffInsteadOfWaitingItOut(t *testing.T) {
+	// The retry loop waits out its backoff with a select that watches only the
+	// app quitting. A user pressing Disconnect during that wait is not seen
+	// until the wait is over - up to eight seconds of a connection being retried
+	// after they asked for silence. The wait has to end when the session stops
+	// being the current one, which is what the loop's own check looks at.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-backoff-stop.json"),
+		state:    engine.NewState(),
+		quitting: make(chan struct{}),
+	}
+	gen := app.sessionSeq.Add(1)
+
+	// What the loop waits on: the backoff, or a signal that this session is no
+	// longer the one that matters.
+	// A long backoff, so running it to the end is unmistakable.
+	const backoff = 2 * time.Second
+	stopped := make(chan struct{})
+	go func() {
+		app.waitBackoff(backoff, gen)
+		close(stopped)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	app.stopping.Store(true)
+	app.sessionSeq.Add(1)
+
+	start := time.Now()
+	select {
+	case <-stopped:
+		if d := time.Since(start); d > backoff/2 {
+			t.Errorf("the backoff took %v after the stop, so it ran most of its length", d)
+		}
+	case <-time.After(backoff + time.Second):
+		t.Fatal("the backoff ran to the end after the user stopped")
+	}
+}

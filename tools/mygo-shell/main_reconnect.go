@@ -76,9 +76,7 @@ func (a *App) runSession(s session, gen uint64) {
 			}
 			a.state.SetReconnecting(d.Attempt, p.MaxAttempts)
 			a.repaint()
-			select {
-			case <-time.After(d.After):
-			case <-a.quitting:
+			if !a.waitBackoff(d.After, gen) {
 				a.recordSession()
 				a.repaint()
 				return
@@ -134,13 +132,40 @@ func (a *App) runSession(s session, gen uint64) {
 		// Wait out the backoff, but not past the user asking to stop or the app
 		// going away: a plain sleep would hold the session goroutine - and with
 		// it the engine it is about to start again - for up to eight seconds
-		// after the shell had already left.
-		select {
-		case <-time.After(d.After):
-		case <-a.quitting:
+		// after the shell had already left, or after the user asked for silence.
+		if !a.waitBackoff(d.After, gen) {
 			a.recordSession()
 			a.repaint()
 			return
+		}
+	}
+}
+
+// waitBackoff sleeps for d, but not past the session ending.
+//
+// It returns true when the wait finished, and false when the session is no
+// longer the one that matters - the user asked to stop, a newer session was
+// started, or the app is going away. A select on time.After alone would run the
+// full wait first, which is up to eight seconds of a connection being retried
+// after the user asked for silence.
+func (a *App) waitBackoff(d time.Duration, gen uint64) bool {
+	// Poll rather than needing a channel per stop: the backoff is at most eight
+	// seconds and the check is two atomics, so a short tick costs nothing and
+	// keeps the stop paths exactly as they are.
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-timer.C:
+			return true
+		case <-a.quitting:
+			return false
+		case <-tick.C:
+			if a.stopping.Load() || a.sessionSeq.Load() != gen {
+				return false
+			}
 		}
 	}
 }
