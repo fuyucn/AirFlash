@@ -316,6 +316,98 @@ func TestAManualReceiverNeedsAUsableAddress(t *testing.T) {
 	}
 }
 
+func TestAManualReceiverIsRefusedForTheReasonItWasGiven(t *testing.T) {
+	// Which refusal the user gets is the whole point of the message: "needs an
+	// address" and "not an IP address" send them to fix different things. A test
+	// that only asserts an error happened cannot tell a reordering of these
+	// checks from a working one, which is how the checks were nearly merged.
+	cases := []struct {
+		name string
+		in   ManualReceiver
+		want string
+	}{
+		{
+			name: "nothing typed at all",
+			in:   ManualReceiver{},
+			want: "a manual receiver needs an address",
+		},
+		{
+			// A name is not an address, so the entry still has nothing to connect
+			// to and the address message is the one that says so.
+			name: "a name with no address",
+			in:   ManualReceiver{Name: "Study", Port: 7000},
+			want: "a manual receiver needs an address",
+		},
+		{
+			name: "a hostname rather than an address",
+			in:   ManualReceiver{Host: "homepod.local", Port: 7000},
+			want: "a manual receiver's address is not an IP address",
+		},
+		{
+			// An empty address with no name is the first guard, which asks for
+			// the address itself rather than for a better-formed one.
+			name: "an empty address and no name",
+			in:   ManualReceiver{Host: "", Port: 7000},
+			want: "a manual receiver needs an address",
+		},
+		{
+			// An empty address is refused before it reaches the IP check: the id
+			// is derived from it and an empty one derives nothing, so the address
+			// message is what comes back whatever else was typed.
+			name: "an empty address with a name",
+			in:   ManualReceiver{Name: "Study", Host: "", Port: 7000},
+			want: "a manual receiver needs an address",
+		},
+		{
+			// An address that is there but is not one is the IP check.
+			name: "a hostname with a name",
+			in:   ManualReceiver{Name: "Study", Host: "homepod.local", Port: 7000},
+			want: "a manual receiver's address is not an IP address",
+		},
+		{
+			name: "a port above the range",
+			in:   ManualReceiver{Host: "10.0.10.31", Port: 70000},
+			want: "a manual receiver's port must be between 1 and 65535",
+		},
+		{
+			name: "a port below the range",
+			in:   ManualReceiver{Host: "10.0.10.31", Port: -1},
+			want: "a manual receiver's port must be between 1 and 65535",
+		},
+	}
+	for _, c := range cases {
+		s := Default()
+		err := s.AddManualReceiver(c.in)
+		if err == nil {
+			t.Errorf("%s was accepted", c.name)
+			continue
+		}
+		if err.Error() != c.want {
+			t.Errorf("%s: error = %q, want %q", c.name, err.Error(), c.want)
+		}
+		// A refused entry must not be stored: the list is what the panel reads.
+		if len(s.ManualReceivers) != 0 {
+			t.Errorf("%s: %d entries were stored anyway", c.name, len(s.ManualReceivers))
+		}
+	}
+}
+
+func TestTheSameAddressIsRefusedWithTheAddress(t *testing.T) {
+	// The duplicate message names what is duplicated, which is the one thing
+	// that tells the user why their second entry did not appear.
+	s := Default()
+	if err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000}); err != nil {
+		t.Fatal(err)
+	}
+	err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000})
+	if err == nil {
+		t.Fatal("the same address was added twice")
+	}
+	if want := "10.0.10.31:7000 is already in the list"; err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestAManualReceiverIsAcceptedWithAUsableAddress(t *testing.T) {
 	s := Default()
 	if err := s.AddManualReceiver(ManualReceiver{Host: "10.0.10.31", Port: 7000}); err != nil {
@@ -462,5 +554,33 @@ func TestASettingThatCouldNotBeWrittenIsReported(t *testing.T) {
 	// setting for the next launch, not this one.
 	if got := bad.Current().LatencyMs; got != 300 {
 		t.Errorf("latency = %d, want 300 while the app runs", got)
+	}
+}
+
+func TestAManualReceiverKeepsTheIdItWasGiven(t *testing.T) {
+	// The id is only derived when the entry did not bring one. One that did -
+	// an entry written by another version, or an id that is not the address -
+	// must survive: overwriting it would make the alias and the per-receiver
+	// settings point at a key that no longer exists.
+	s := Default()
+	if err := s.AddManualReceiver(ManualReceiver{Id: "custom-id", Host: "10.0.10.31", Port: 7000}); err != nil {
+		t.Fatalf("an entry with its own id was refused: %v", err)
+	}
+	if got := s.ManualReceivers[0].Id; got != "custom-id" {
+		t.Errorf("id = %q, want the one given", got)
+	}
+}
+
+func TestABlankExplicitIdIsKeptAsItWasGiven(t *testing.T) {
+	// An id that was given is used as it came, so a blank one is stored blank -
+	// which is what this records. It is a guard that only ever sees the derived
+	// id, so a blank explicit id is the one thing it cannot catch.
+	s := Default()
+	err := s.AddManualReceiver(ManualReceiver{Id: "   ", Host: "10.0.10.31", Port: 7000})
+	if err != nil {
+		t.Fatalf("an entry with a blank id was refused: %v", err)
+	}
+	if got := s.ManualReceivers[0].Id; got != "   " {
+		t.Errorf("id = %q, want it kept as given", got)
 	}
 }
