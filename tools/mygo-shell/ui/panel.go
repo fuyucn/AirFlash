@@ -119,7 +119,7 @@ func (p *Panel) View(c *ui.Context) {
 		// The platform does not draw a surface, so the panel does. Square, and
 		// outlined by a dashed rule like every other block in the app.
 		box.Background(pal.Ground).Radius(0).
-			BorderWidth(1).BorderStyle(ui.BorderDashed).BorderColor(pal.Hairline)
+			BorderWidth(1).BorderStyle(ui.BorderSolid).BorderColor(pal.Separator)
 	}
 
 	box.Children(func() {
@@ -142,7 +142,7 @@ func (p *Panel) header(c *ui.Context, pal palette, cfg settings.Settings, st eng
 			ui.Box(c).Width(8).Height(8).Radius(0).Background(col)
 			ui.Text(c, label).FontSize(sizeSmall).TextColor(pal.InkMuted)
 		})
-	}).BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(pal.Hairline)
+	}).BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(pal.Separator)
 }
 
 // receivers lists what discovery found, one row each. This is the panel's
@@ -195,7 +195,7 @@ func (p *Panel) receiverRow(c *ui.Context, pal palette, rec discovery.Receiver, 
 	if playing {
 		// The playing row is the one block that steps out of the page, so the
 		// eye finds it without the accent spending itself on a fill.
-		row.Background(pal.SurfaceHi)
+		row.Background(pal.Hover)
 	} else if !rec.Online {
 		// A receiver that stopped answering is still listed, because the user
 		// may want to see that it is the one that went, not have it vanish.
@@ -271,7 +271,7 @@ func (p *Panel) pairing(c *ui.Context, pal palette, st engine.Metrics) {
 	}
 
 	ui.Column(c).FillWidth().Padding(10, 10, 10, 10).Gap(9).Radius(0).
-		Background(pal.SurfaceHi).
+		Background(pal.Hover).
 		BorderWidth(1).BorderStyle(ui.BorderDashed).BorderColor(pal.Warning).
 		Children(func() {
 			ui.Text(c, fmt.Sprintf(p.t("Enter the PIN shown on %s"), which)).
@@ -428,7 +428,7 @@ func (p *Panel) footer(c *ui.Context, pal palette) {
 		if ui.Button(c, p.t("Quit")).Clicked() && p.deps.OnQuit != nil {
 			p.deps.OnQuit()
 		}
-	}).BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(pal.Hairline)
+	}).BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderSolid).BorderColor(pal.Separator)
 }
 
 // recDetail is the second line of a receiver: what it is and where it is.

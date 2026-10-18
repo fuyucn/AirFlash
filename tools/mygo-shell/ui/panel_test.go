@@ -723,3 +723,29 @@ func TestASecondPlayOnTheReceiverAlreadyPlayingIsNotStarted(t *testing.T) {
 		t.Errorf("play fired %d times for a receiver already playing", plays)
 	}
 }
+
+func TestTheWindowAgreesWithThePanelAboutAnOfflineReceiver(t *testing.T) {
+	// The window and the panel are two surfaces of one app. A device that is not
+	// answering is the same device on both, so both must answer the same way:
+	// the panel says offline and offers nothing, and the window did the opposite
+	// - a Play button on a receiver that could only time out.
+	rec := offlineReceiver()
+	view := New(Deps{
+		State:           engine.NewState(),
+		Settings:        settings.Open("/tmp/airflash-window-offline.json"),
+		Life:            shell.New(),
+		Receivers:       func() []discovery.Receiver { return []discovery.Receiver{rec} },
+		PlayingReceiver: func() *discovery.Receiver { return nil },
+	})
+	view.SetPage("receivers")
+	tester := ui.NewTester(view.View, 880, 640)
+
+	if !tester.HasText("offline") {
+		t.Error("the window does not mark an offline receiver offline")
+	}
+	for _, s := range tester.Texts() {
+		if s == "Play" {
+			t.Error("the window offers Play for an offline receiver, which could only fail")
+		}
+	}
+}

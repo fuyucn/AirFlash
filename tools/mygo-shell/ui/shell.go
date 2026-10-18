@@ -210,9 +210,9 @@ func (s *Shell) topBar(c *ui.Context, p palette, cfg settings.Settings, st engin
 	bar := ui.Row(c).FillWidth().Height(38).Shrink(0).
 		Padding(10, 18).Gap(18).Radius(0).
 		Background(p.Surface)
-	// The rule is under the bar, so the menu and the content meet at a dashed
-	// line rather than at a change of tone alone.
-	bar.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+	// A hairline under the bar, so the menu and the content meet where the
+	// platform's own toolbars do: at a rule rather than at a change of tone.
+	bar.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator)
 
 	bar.Children(func() {
 		ui.Text(c, s.t("AIRFLASH")).FontSize(sizeSmall).Bold().TextColor(p.Ink).
@@ -247,7 +247,7 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 	// sized to its label rather than stretched.
 	row := ui.Row(c).Padding(6, 10).Radius(0).Gap(8).AlignItems(ui.Center)
 	if selected {
-		row.Background(p.SurfaceHi)
+		row.Background(p.Hover)
 	}
 	row.Children(func() {
 		col := p.InkMuted
@@ -266,19 +266,30 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 	}
 }
 
+// contentColumn is the widest the page's content is allowed to be, in DIPs.
+//
+// A label and its value are read as one thing. Stretch that pair across a
+// window 900 DIPs wide and the eye has to travel the width of the window to
+// join them, which is a movement no other window on the machine asks for. So
+// the content is kept to the width at which a row still reads as a row, and the
+// space that would have been left over stays empty rather than being filled.
+const contentColumn = 560
+
 func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	body := ui.Scroll(c).Grow(1).Padding(28, 24)
 	body.Children(func() {
-		switch s.page {
-		case pageStats:
-			s.statsPage(c, p, cfg, st)
-		case pageReceivers:
-			s.receiversPage(c, p, cfg, st)
-		case pageEqualizer:
-			s.equalizerPage(c, p, cfg)
-		case pageSettings:
-			s.settingsPage(c, p, cfg, st)
-		}
+		ui.Column(c).Width(contentColumn).Center().Gap(0).Children(func() {
+			switch s.page {
+			case pageStats:
+				s.statsPage(c, p, cfg, st)
+			case pageReceivers:
+				s.receiversPage(c, p, cfg, st)
+			case pageEqualizer:
+				s.equalizerPage(c, p, cfg)
+			case pageSettings:
+				s.settingsPage(c, p, cfg, st)
+			}
+		})
 	})
 }
 
@@ -322,7 +333,7 @@ func (s *Shell) gaps(c *ui.Context, p palette, st engine.Metrics) {
 			return
 		}
 
-		ribbon := ui.Box(c).FillWidth().Height(34).Radius(0).Background(p.Surface)
+		ribbon := ui.Box(c).FillWidth().Height(34).Radius(radiusControl).Background(p.Fill)
 		ribbon.Draw(func(pt *ui.Painter, r ui.Rect) {
 			drawGapRibbon(pt, r, p, st.Slots)
 		})
@@ -390,7 +401,7 @@ func drawGapRibbon(pt *ui.Painter, r ui.Rect, p palette, slots []engine.Slot) {
 		} else {
 			// A clean second is a low tick: enough to see the session running,
 			// quiet enough that a gap stands out against it.
-			pt.Fill(ui.Rect{X: x, Y: r.Y + r.H - 3, W: col - 1, H: 3}, p.Hairline, 0)
+			pt.Fill(ui.Rect{X: x, Y: r.Y + r.H - 3, W: col - 1, H: 3}, p.Separator, 0)
 		}
 		x -= col
 	}
@@ -416,7 +427,12 @@ func (s *Shell) headline(c *ui.Context, p palette, cfg settings.Settings, st eng
 			}
 		})
 
-		// The parts, as label-and-value rows.
+	})
+
+	// The parts that add up to it, as one table on a raised surface. The card is
+	// not decoration: it says these three rows are one thing, which is the
+	// question the figure above raises.
+	card(c, p, 10, func() {
 		s.metricRow(c, p, s.t("Target"), fmt.Sprintf("%.0f ms", target), p.Ink)
 		if st.HasReceiverBuffer {
 			label := "Receiver buffer"
@@ -466,7 +482,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 		}
 
 		hist := st.History
-		plot := ui.Box(c).FillWidth().Height(132).Radius(0).Background(p.Surface)
+		plot := ui.Box(c).FillWidth().Height(132).Radius(radiusControl).Background(p.Fill)
 		plot.Draw(func(pt *ui.Painter, r ui.Rect) {
 			drawLatencyPlot(pt, r, p, hist, target)
 		})
@@ -798,7 +814,7 @@ func (s *Shell) diagnostics(c *ui.Context, p palette, cfg settings.Settings, st 
 	unhealthy := st.SenderLateRecoveries > 0 || st.SkippedPackets > 0 ||
 		losses > 0 || st.RetransmitQueueDrops > 0 || st.MediaSendDropped > 0
 
-	ui.Column(c).FillWidth().Gap(10).Children(func() {
+	card(c, p, 10, func() {
 		ui.Row(c).FillWidth().Children(func() {
 			sectionLabel(s.deps.Words, c, p, "LOSSES")
 			ui.Spacer(c).Grow(1)
@@ -835,7 +851,7 @@ func (s *Shell) capture(c *ui.Context, p palette, st engine.Metrics) {
 	cap := st.Capture
 	unhealthy := cap.DroppedFrames > 0 || cap.UnderrunPackets > 0 || st.SilentReports > 0
 
-	ui.Column(c).FillWidth().Gap(10).Children(func() {
+	card(c, p, 10, func() {
 		ui.Row(c).FillWidth().Children(func() {
 			sectionLabel(s.deps.Words, c, p, "CAPTURE")
 			ui.Spacer(c).Grow(1)
@@ -900,81 +916,94 @@ func (s *Shell) receiversPage(c *ui.Context, p palette, cfg settings.Settings, s
 			playingID = rec.ID
 		}
 
-		for _, r := range found {
-			rec := r
-			isPlaying := rec.ID == playingID && playingID != ""
-			row := ui.Row(c).FillWidth().Padding(14, 2).Gap(12).Radius(0)
-			row.Children(func() {
-				ui.Column(c).Gap(3).Children(func() {
-					ui.Row(c).Gap(8).Children(func() {
-						// An offline receiver's name steps back, so the list
-						// says what is reachable rather than only what was found.
-						nameInk := p.Ink
-						if !rec.Online {
-							nameInk = p.InkMuted
+		// One block, rounded and raised: the receivers are one list, and a list is
+		// one surface rather than rows laid straight on the page.
+		list := ui.Column(c).FillWidth().Radius(radiusBlock).Background(p.Surface).
+			Padding(4, 12).Shadow(0, 1, 3, 0, p.Shadow)
+		list.Children(func() {
+			for _, r := range found {
+				rec := r
+				isPlaying := rec.ID == playingID && playingID != ""
+				row := ui.Row(c).FillWidth().Padding(12, 8).Gap(12)
+				row.Children(func() {
+					ui.Column(c).Gap(3).Children(func() {
+						ui.Row(c).Gap(8).Children(func() {
+							// An offline receiver's name steps back, so the list
+							// says what is reachable rather than only what was found.
+							nameInk := p.Ink
+							if !rec.Online {
+								nameInk = p.InkMuted
+							}
+							ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk)
+							if rec.IsGroup() && !rec.Complete() {
+								ui.Text(c, s.t("incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
+							}
+							if !rec.Online {
+								ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
+							}
+						})
+						detail := rec.Address
+						if name := discovery.DisplayModel(rec.Model); name != "" {
+							detail = name + " · " + rec.Address
 						}
-						ui.Text(c, rec.Name).FontSize(sizeBody).TextColor(nameInk)
-						if rec.IsGroup() && !rec.Complete() {
-							ui.Text(c, s.t("incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
+						if rec.IsGroup() {
+							detail = fmt.Sprintf(s.t("stereo · %d/2 · %s"), len(rec.Members), detail)
 						}
-						if !rec.Online {
-							ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
-						}
+						ui.Text(c, detail).FontSize(sizeSmall).TextColor(p.InkMuted)
 					})
-					detail := rec.Address
-					if name := discovery.DisplayModel(rec.Model); name != "" {
-						detail = name + " · " + rec.Address
+
+					ui.Spacer(c).Grow(1)
+
+					// One control per row that matches what it would do. A row
+					// showing Play for the receiver that is already playing is a
+					// button that starts a second session the engine cannot run. The
+					// row above already states "incomplete" and "offline", so the two
+					// cases that only repeated them are gone.
+					switch {
+					case isPlaying:
+						// Disconnect, not Stop: what the button ends is the connection to
+						// this receiver, which is what the row above it says. "Stop" reads
+						// as pausing something that is playing, and the receiver stays
+						// connected either way.
+						if ui.Button(c, s.t("Disconnect")).Clicked() && s.deps.OnStop != nil {
+							s.deps.OnStop()
+						}
+					case !rec.Online:
+						// The tray panel says "offline" here, so this window does too:
+						// one app, one answer for the same device.
+						ui.Text(c, s.t("offline")).FontSize(sizeSmall).TextColor(p.InkMuted)
+					case !rec.Complete():
+						// Half a stereo pair sounds wrong, so it is said rather than offered.
+						ui.Text(c, s.t("pair incomplete")).FontSize(sizeSmall).TextColor(p.Warning)
+					default:
+						if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
+							s.deps.OnPlay(rec)
+						}
 					}
-					if rec.IsGroup() {
-						detail = fmt.Sprintf(s.t("stereo · %d/2 · %s"), len(rec.Members), detail)
+
+					// The way to a receiver's own settings. Always there, rather than
+					// only once it has some: otherwise a receiver that has never been
+					// tuned could never be, and the first thing a user wants to change
+					// is the device they have just added.
+					if ui.Button(c, s.t("Tune")).Clicked() {
+						s.tuning = rec.ID
 					}
-					ui.Text(c, detail).FontSize(sizeSmall).TextColor(p.InkMuted)
 				})
+				// A hairline between the rows of the list, the same one the
+				// platform puts between the rows of its own lists.
+				row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator)
 
-				ui.Spacer(c).Grow(1)
-
-				// One control per row that matches what it would do. A row
-				// showing Play for the receiver that is already playing is a
-				// button that starts a second session the engine cannot run. The
-				// row above already states "incomplete" and "offline", so the two
-				// cases that only repeated them are gone.
-				switch {
-				case isPlaying:
-					// Disconnect, not Stop: what the button ends is the connection to
-					// this receiver, which is what the row above it says. "Stop" reads
-					// as pausing something that is playing, and the receiver stays
-					// connected either way.
-					if ui.Button(c, s.t("Disconnect")).Clicked() && s.deps.OnStop != nil {
-						s.deps.OnStop()
-					}
-				default:
-					if ui.Button(c, s.t("Play")).Clicked() && s.deps.OnPlay != nil {
-						s.deps.OnPlay(rec)
-					}
+				// What this receiver does for itself. It is shown once the receiver
+				// has a setting of its own, or while it is open, because a row per
+				// device for a setting nobody has changed says the same thing three
+				// times over and hides the one that is different.
+				if s.tuning == rec.ID || cfg.Options(rec.ID).HasOwn() {
+					s.receiverOptions(c, p, cfg, rec)
 				}
-
-				// The way to a receiver's own settings. Always there, rather than
-				// only once it has some: otherwise a receiver that has never been
-				// tuned could never be, and the first thing a user wants to change
-				// is the device they have just added.
-				if ui.Button(c, s.t("Tune")).Clicked() {
-					s.tuning = rec.ID
-				}
-			})
-			// One dashed rule under each receiver, which is what separates
-			// them: the same divider the panel and the sections use.
-			row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
-
-			// What this receiver does for itself. It is shown once the receiver
-			// has a setting of its own, or while it is open, because a row per
-			// device for a setting nobody has changed says the same thing three
-			// times over and hides the one that is different.
-			if s.tuning == rec.ID || cfg.Options(rec.ID).HasOwn() {
-				s.receiverOptions(c, p, cfg, rec)
 			}
-		}
 
-		s.manualReceivers(c, p, cfg)
+			s.manualReceivers(c, p, cfg)
+		})
 	})
 }
 
@@ -1087,7 +1116,7 @@ func (s *Shell) manualReceivers(c *ui.Context, p palette, cfg settings.Settings)
 					s.deps.OnManualReceiver(false, index, settings.ManualReceiver{}, nil)
 				}
 			})
-			row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+			row.BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderSolid).BorderColor(p.Separator)
 		}
 
 		if s.adding.open {
@@ -1105,8 +1134,7 @@ func (s *Shell) manualReceivers(c *ui.Context, p palette, cfg settings.Settings)
 		ui.Text(c, s.t("For a receiver the network search cannot see: a speaker on "+
 			"another subnet, or one whose announcements the router does not forward.")).
 			FontSize(sizeSmall).TextColor(p.InkMuted)
-	}).Padding(0, 20, 0, 0).
-		BorderWidth(1, 0, 0, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+	})
 }
 
 // addManualForm is the fields one manual receiver needs.
@@ -1295,8 +1323,7 @@ func (s *Shell) devicePicker(c *ui.Context, p palette, d devicePicker) {
 		if chosen != "" {
 			ui.Text(c, d.unsetAs).FontSize(sizeSmall).TextColor(p.InkMuted)
 		}
-	}).Padding(0, 0, 20, 0).
-		BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+	})
 }
 
 // equalizerPage is the ten-band graphic equalizer.
@@ -1418,7 +1445,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 	ui.Column(c).FillWidth().Gap(26).Children(func() {
 		// The mode switch, which is the one setting that changes what the app
 		// costs to run.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			light := cfg.Mode == settings.ModeLightweight
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Lightweight mode")).FontSize(sizeBody).TextColor(p.Ink)
@@ -1437,21 +1464,19 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 			ui.Text(c, s.t("Drops the window material and the trend chart, and samples the engine "+
 				"once a second. The audio path is untouched: the engine keeps its own process "+
 				"either way.")).FontSize(sizeSmall).TextColor(p.InkMuted)
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		// Latency. It belongs here rather than on Stats: it is a setting the
 		// user chooses once, not a reading they come back to. Stats shows what
 		// the current target is; this is where it is changed.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			s.latencyControl(c, p, cfg, st)
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		// The capture rate. The engine takes 44100 or 48000, and the pair is not
 		// interchangeable: a HomePod is asked for whichever the stream is at, and
 		// 48 kHz halves the work the engine does per second of audio.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			sectionLabel(s.deps.Words, c, p, "SAMPLE RATE")
 			rates := []int{44100, 48000}
 			labels := []string{"44.1 kHz", "48 kHz"}
@@ -1467,13 +1492,12 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 			}
 			ui.Text(c, s.t("A new rate applies to the next stream.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		// Whether a launch by hand shows anything. The tray is the app's surface,
 		// so by default opening the panel is what a hand launch does: an app that
 		// starts invisible gives the user no way to know it is running.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			atLaunch := cfg.OpenAtLaunch
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Show the window when I open the app")).FontSize(sizeBody).TextColor(p.Ink)
@@ -1487,12 +1511,11 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 			ui.Text(c, s.t("Off by default: the app starts in the tray and opens its panel. "+
 				"Starting with the machine always stays quiet, here or not.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		// Starting with the machine. The desktop host does this through the same
 		// Run key, so the two are indistinguishable to the user.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			login := cfg.StartAtLogin
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Start when I sign in")).FontSize(sizeBody).TextColor(p.Ink)
@@ -1506,8 +1529,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 			ui.Text(c, s.t("The shell starts in the tray at sign-in and connects to the "+
 				"last receiver, so nothing has to be opened.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		// The adapter mDNS browses on. Nothing else in the app asks which way out
 		// the browsing should take, and on a machine with a VPN up that is the
@@ -1522,7 +1544,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 		// Silencing the local speakers while streaming. The desktop host does
 		// this by default, and it is what a user expects: the sound is going to
 		// the HomePod.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			mute := cfg.MuteWhileStreaming
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Mute the PC speakers while streaming")).FontSize(sizeBody).TextColor(p.Ink)
@@ -1536,12 +1558,11 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 			ui.Text(c, s.t("The sound is being sent to the HomePod, so playing it here too would "+
 				"be the same voice twice, one delayed behind the other.")).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		// Reconnecting a session that drops. Off by default, because reaching for
 		// a speaker again on its own is something to ask for rather than assume.
-		ui.Column(c).Gap(8).Children(func() {
+		card(c, p, 8, func() {
 			reconnect := cfg.Reconnect
 			ui.Row(c).FillWidth().Children(func() {
 				ui.Text(c, s.t("Reconnect a dropped stream")).FontSize(sizeBody).TextColor(p.Ink)
@@ -1571,8 +1592,7 @@ func (s *Shell) settingsPage(c *ui.Context, p palette, cfg settings.Settings, st
 						TextColor(p.Ink)
 				})
 			}
-		}).Padding(0, 0, 20, 0).
-			BorderWidth(0, 0, 1, 0).BorderStyle(ui.BorderDashed).BorderColor(p.Hairline)
+		})
 
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Text(c, s.t("Closing the window")).FontSize(sizeBody).TextColor(p.Ink)
