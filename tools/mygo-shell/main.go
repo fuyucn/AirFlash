@@ -989,6 +989,13 @@ func (a *App) playReceiver(r discovery.Receiver) {
 	if !r.Complete() {
 		return
 	}
+	// A receiver the browse has lost is not played to, whatever the surface
+	// offered: hiding the button is how the interface says so, not the rule
+	// itself. A session started for a device that is not answering can only
+	// time out, and the login path reaches this function without a surface.
+	if !r.Online {
+		return
+	}
 	// Playing to the receiver that is already playing is not a second request
 	// to hear it: it is a request the engine cannot honour. Its start takes over
 	// whatever session is running and drops it, so a second Play on the same

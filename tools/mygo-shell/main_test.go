@@ -468,3 +468,30 @@ func TestAStaleSessionStandsDownWhenANewerOneStarts(t *testing.T) {
 		t.Error("the old session still thinks it is current, so it would start a second engine")
 	}
 }
+
+func TestAnOfflineReceiverIsNotPlayedToEvenIfTheUiAsks(t *testing.T) {
+	// The surfaces hide Play for a receiver the browse has lost, but hiding a
+	// control is not the rule - it is a drawing of it. A stale frame, or the
+	// connect-at-login path, can still reach playReceiver with a device that is
+	// not answering, and starting a session for one can only time out.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-offline-play.json"),
+		state:    engine.NewState(),
+	}
+	rec := discovery.Fold([]discovery.Record{
+		{Instance: "Living Room", Type: discovery.ServiceAirPlay, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "AA", "model": "AudioAccessory1,1"}},
+		{Instance: "AA@Living Room", Type: discovery.ServiceRAOP, Address: "10.0.10.31", Port: 7000,
+			TXT: map[string]string{"deviceid": "AA", "cn": "0,1", "am": "AudioAccessory1,1"}},
+	})[0]
+	rec.Online = false
+
+	app.playReceiver(rec)
+
+	if app.playing.Load() != nil {
+		t.Error("an offline receiver was marked as the one playing")
+	}
+	if got := app.sessionSeq.Load(); got != 0 {
+		t.Errorf("session generation = %d, want no session started for an offline receiver", got)
+	}
+}
