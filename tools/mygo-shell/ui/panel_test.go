@@ -802,3 +802,24 @@ func TestNoEnglishLeaksIntoTheChineseInterface(t *testing.T) {
 		}
 	}
 }
+
+func TestSetPageAcceptsTheIdItIsGiven(t *testing.T) {
+	// The tray menu labels its items for a person - "Stats", "Settings" - and
+	// those labels were handed to SetPage as if they were page ids. Every one of
+	// them fell through to the default and opened Receivers, so choosing Stats
+	// from the menu opened the receiver list.
+	cases := map[string]page{
+		"stats":     pageStats,
+		"settings":  pageSettings,
+		"receivers": pageReceivers,
+		"equalizer": pageEqualizer,
+	}
+	for id, want := range cases {
+		view := New(Deps{State: streamingState(), Settings: settings.Open("/tmp/airflash-setpage.json"),
+			Life: shell.New()})
+		view.SetPage(id)
+		if view.page != want {
+			t.Errorf("SetPage(%q) = %v, want %v", id, view.page, want)
+		}
+	}
+}

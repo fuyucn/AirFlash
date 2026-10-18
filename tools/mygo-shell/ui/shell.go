@@ -173,6 +173,22 @@ func (s *Shell) SetPage(name string) {
 	}
 }
 
+// Page is the page the window is showing, as its id. It exists so the host can
+// ask the open window what it is showing rather than keeping a second copy that
+// can drift from it.
+func (s *Shell) Page() string {
+	switch s.page {
+	case pageStats:
+		return "stats"
+	case pageEqualizer:
+		return "equalizer"
+	case pageSettings:
+		return "settings"
+	default:
+		return "receivers"
+	}
+}
+
 // View builds one frame.
 //
 // The window keeps its own title bar, so there is no second one drawn inside

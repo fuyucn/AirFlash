@@ -168,6 +168,12 @@ type App struct {
 	// window's because the window is destroyed and rebuilt freely, and a rebuild
 	// that lost the page would drop the user back on Stats.
 	page atomic.Pointer[string]
+
+	// view is the shell the open window draws. openWindow keeps it so a second
+	// request - the tray menu choosing Settings while the window is already up -
+	// can move the window rather than only bringing it forward, which is what
+	// made that menu item look dead.
+	view atomic.Pointer[appui.Shell]
 }
 
 // currentPage is which page the window shows, for a rebuild to keep.
@@ -185,6 +191,7 @@ func (a *App) run() {
 		if w := a.win.Swap(nil); w != nil {
 			w.Destroy()
 		}
+		a.view.Store(nil)
 		// Discovery serves the window, so it stops with it.
 		a.stopDiscovery()
 	})
@@ -308,6 +315,20 @@ func (a *App) dueToPaint(nowMs int64) bool {
 	return true
 }
 
+// showPage moves the open window to a page, when there is one to move.
+//
+// It is separate from openWindow so the rule can be tested without a real
+// window: the part that matters is that asking for a page updates the view and
+// the remembered page, not that a native handle was asked to redraw.
+func (a *App) showPage(page string) {
+	v := a.view.Load()
+	if v == nil {
+		return
+	}
+	v.SetPage(page)
+	a.page.Store(&page)
+}
+
 func (a *App) openWindow(page string) {
 	// A window the platform has already destroyed must not be shown again:
 	// Show on a dead window does nothing at all, which is what leaves the
@@ -315,6 +336,11 @@ func (a *App) openWindow(page string) {
 	// The close hook clears a.win, so this is the second line of defence for
 	// a close that arrives from somewhere else.
 	if w := a.win.Load(); w != nil && !w.IsDestroyed() {
+		// The window is already up, which is not a reason to ignore which page
+		// was asked for: a menu item that only raises a window already showing
+		// something else reads as a menu item that did nothing.
+		a.showPage(page)
+		w.Invalidate()
 		w.Show()
 		w.Focus()
 		return
@@ -492,6 +518,7 @@ func (a *App) openWindow(page string) {
 	})
 	view.SetPage(page)
 	a.page.Store(&page)
+	a.view.Store(view)
 
 	opts := mygo.WindowOptions{
 		Title:           "AirFlash",
@@ -599,13 +626,17 @@ func (a *App) trayMenuItems() *mygo.Menu {
 		}, mygo.Separator())
 	}
 
-	window := func(page string) *mygo.MenuItem {
-		return &mygo.MenuItem{Label: page, Click: func(*mygo.MenuItem, *mygo.Window) {
-			a.openWindow(page)
+	// The id and the label are not the same string. SetPage takes the id, which
+	// is lower case, and a menu item shows the label a person reads. Handing the
+	// label to openWindow sent every item to the default page, so choosing Stats
+	// opened Receivers.
+	window := func(id, label string) *mygo.MenuItem {
+		return &mygo.MenuItem{ID: id, Label: label, Click: func(*mygo.MenuItem, *mygo.Window) {
+			a.openWindow(id)
 		}}
 	}
 	return mygo.NewMenu(append(items,
-		window("Stats"), window("Settings"),
+		window("stats", "Stats"), window("settings", "Settings"),
 		mygo.Separator(),
 		&mygo.MenuItem{Label: "Quit", Click: func(*mygo.MenuItem, *mygo.Window) {
 			mygo.App.Quit()

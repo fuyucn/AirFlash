@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,8 @@ import (
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/discovery"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/engine"
 	"github.com/fuyucn/airflash/tools/mygo-shell/internal/settings"
+	"github.com/fuyucn/airflash/tools/mygo-shell/internal/shell"
+	appui "github.com/fuyucn/airflash/tools/mygo-shell/ui"
 )
 
 func TestPaintRateFollowsTheMode(t *testing.T) {
@@ -493,5 +496,65 @@ func TestAnOfflineReceiverIsNotPlayedToEvenIfTheUiAsks(t *testing.T) {
 	}
 	if got := app.sessionSeq.Load(); got != 0 {
 		t.Errorf("session generation = %d, want no session started for an offline receiver", got)
+	}
+}
+
+func TestTheTrayMenuSeparatesTheIdFromTheLabel(t *testing.T) {
+	// The items were labelled "Stats" and "Settings" and those labels were handed
+	// to openWindow as page ids. SetPage takes lower-case ids, so every item fell
+	// through to its default and opened Receivers: choosing Stats from the tray
+	// opened the receiver list, which reads as a menu that does nothing.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-tray-pages.json"),
+		state:    engine.NewState(),
+	}
+	menu := app.trayMenuItems()
+	for _, label := range []string{"Stats", "Settings"} {
+		want := strings.ToLower(label)
+		item := menu.ItemByID(want)
+		if item == nil {
+			t.Fatalf("no item with id %q: the label is being used as the id again", want)
+		}
+		if item.Label != label {
+			t.Errorf("item %q shows %q, want %q", want, item.Label, label)
+		}
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+func TestAskingForAPageMovesTheOpenWindow(t *testing.T) {
+	// The tray menu's Stats and Settings items only brought the window forward
+	// when one was already open, so choosing either while the window showed
+	// Receivers did nothing visible - a menu item that reads as broken.
+	app := &App{
+		settings: settings.Open("/tmp/airflash-page-move.json"),
+		state:    engine.NewState(),
+	}
+	view := appui.New(appui.Deps{
+		State:    app.state,
+		Settings: app.settings,
+		Life:     shell.New(),
+	})
+	app.view.Store(view)
+	app.page.Store(ptr("receivers"))
+
+	app.showPage("settings")
+
+	if got := view.Page(); got != "settings" {
+		t.Errorf("the open view shows %q, want settings", got)
+	}
+	if got := app.currentPage(); got != "settings" {
+		t.Errorf("the remembered page is %q, want settings", got)
+	}
+}
+
+// showPage does nothing when no window is open, which is the normal case: the
+// next openWindow builds a view on the page it was asked for.
+func TestAskingForAPageWithNoWindowIsHarmless(t *testing.T) {
+	app := &App{settings: settings.Open("/tmp/airflash-page-none.json"), state: engine.NewState()}
+	app.showPage("stats")
+	if app.view.Load() != nil {
+		t.Error("showPage created a view with no window")
 	}
 }
