@@ -167,4 +167,7 @@ var chinese = map[string]string{
 	"Settings could not be saved: %v":        "设置无法保存：%v",
 	"The speaker refused the volume: %s":     "音箱拒绝了音量设置：%s",
 	"The equalizer was not applied: %s":      "均衡器未生效：%s",
+	"%d s ago":                               "%d 秒前",
+	"%.0f ms now":                            "当前 %.0f ms",
+	"target %d ms":                           "目标 %d ms",
 }

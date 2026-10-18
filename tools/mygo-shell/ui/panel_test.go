@@ -773,31 +773,47 @@ func TestTheOfflineRowStepsBackRatherThanForward(t *testing.T) {
 func TestNoEnglishLeaksIntoTheChineseInterface(t *testing.T) {
 	// The other translation test is a hand-kept list of keys, so it cannot see a
 	// string that was never passed through the translator at all: the latency
-	// line concatenated " · Auto, at your floor" as a literal and showed English
-	// on a Chinese page. This renders the page and looks for English prose
-	// instead, which is what a user would see.
+	// line concatenated " · Auto, at your floor" as a literal, and the latency
+	// chart wrote "476 ms now" and "90 s ago" the same way. Both showed English
+	// on a Chinese page. This renders every page and looks for English prose in
+	// what was actually drawn, which is what a user would see.
 	cfg := settings.Open("/tmp/airflash-chinese-leak.json")
 	cfg.Update(func(s *settings.Settings) {
 		s.Language = string(i18n.Chinese)
 		s.LatencyAuto = true
 		s.LatencyMs = 500
 	})
+	// A state with a measured reading, so the chart's own labels - "476 ms now",
+	// "90 s ago" - are actually drawn. A streaming state with no metrics draws
+	// neither, which is why the first version of this test missed them.
+	st := streamingState()
+	st.Apply(engine.Event{Event: "transport_metrics", Raw: []byte(
+		`{"event":"transport_metrics","session_uptime_ms":90000,"sender_late_recoveries":0,` +
+			`"skipped_packets":0,"max_send_lateness_us":900,"members":[` +
+			`{"host":"10.0.10.31","media":{"packets_sent":500,"receiver_latency_ms":466},` +
+			`"health":{"feedback_rtt_ms":21.0}}]}`)})
+
 	view := New(Deps{
 		Words:    i18n.For(i18n.Chinese),
-		State:    streamingState(),
+		State:    st,
 		Settings: cfg,
 		Life:     shell.New(),
 	})
-	view.SetPage("settings")
-	tester := ui.NewTester(view.View, 880, 1180)
 
 	// Words that are only ever English prose in this interface. Identifiers such
-	// as "HomePod", "AirPlay" and "dB" are the same in both languages and are
-	// not in the list.
-	for _, english := range []string{"at your floor", "The engine will be asked", "Drops the window"} {
+	// as "HomePod", "AirPlay" and "dB" are the same in both languages.
+	english := []string{
+		"at your floor", "The engine will be asked", "Drops the window",
+		"ms now", "s ago", "target ",
+	}
+	for _, page := range []string{"stats", "receivers", "equalizer", "settings"} {
+		view.SetPage(page)
+		tester := ui.NewTester(view.View, 880, 1180)
 		for _, text := range tester.Texts() {
-			if strings.Contains(text, english) {
-				t.Errorf("Chinese interface shows English %q in %q", english, text)
+			for _, phrase := range english {
+				if strings.Contains(text, phrase) {
+					t.Errorf("%s page shows English %q in %q", page, phrase, text)
+				}
 			}
 		}
 	}

@@ -355,7 +355,7 @@ func (s *Shell) gaps(c *ui.Context, p palette, st engine.Metrics) {
 		})
 
 		ui.Row(c).FillWidth().Children(func() {
-			ui.Text(c, fmt.Sprintf("%d s ago", len(st.Slots))).
+			ui.Text(c, fmt.Sprintf(s.t("%d s ago"), len(st.Slots))).
 				FontSize(sizeSmall).TextColor(p.InkMuted)
 			ui.Spacer(c).Grow(1)
 			ui.Text(c, s.t("now")).FontSize(sizeSmall).TextColor(p.InkMuted)
@@ -486,7 +486,7 @@ func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine
 			sectionLabel(s.deps.Words, c, p, "LATENCY OVER TIME")
 			ui.Spacer(c).Grow(1)
 			if st.HasTotalLatency && len(st.History) > 0 {
-				ui.Text(c, fmt.Sprintf("%.0f ms now", st.History[len(st.History)-1])).
+				ui.Text(c, fmt.Sprintf(s.t("%.0f ms now"), st.History[len(st.History)-1])).
 					FontSize(sizeBody).TextColor(p.Ink)
 			}
 		})
