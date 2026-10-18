@@ -235,14 +235,22 @@ func (s *Store) Update(fn func(*Settings)) Settings {
 	path := s.path
 	s.mu.Unlock()
 
+	// The error describes the last write, not the worst one that ever happened.
+	// It is set here on every write, including to nil: a store that failed once
+	// - a full disk, a settings file a sync tool held open - would otherwise
+	// keep a red warning on the settings page forever, even though every change
+	// after it reached the disk.
+	var writeErr error
 	if b, err := json.MarshalIndent(cur, "", "  "); err == nil {
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		if err := os.WriteFile(path, b, 0o644); err != nil {
-			s.mu.Lock()
-			s.writeErr = err
-			s.mu.Unlock()
+		if mkErr := os.MkdirAll(filepath.Dir(path), 0o755); mkErr != nil {
+			writeErr = mkErr
+		} else if err := os.WriteFile(path, b, 0o644); err != nil {
+			writeErr = err
 		}
 	}
+	s.mu.Lock()
+	s.writeErr = writeErr
+	s.mu.Unlock()
 	return cur
 }
 

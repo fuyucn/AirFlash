@@ -580,3 +580,36 @@ func TestABlankExplicitIdIsKeptAsItWasGiven(t *testing.T) {
 		t.Errorf("id = %q, want it kept as given", got)
 	}
 }
+
+func TestASuccessfulWriteClearsAnEarlierFailure(t *testing.T) {
+	// writeErr was set when a write failed and never cleared, so one bad write -
+	// a full disk, a settings file a sync tool held open - put a red warning on
+	// the settings page that never went away, even though every change after it
+	// reached the disk. The warning has to describe the last write.
+	dir := t.TempDir()
+	// A path under a file rather than a directory: MkdirAll fails, so the write
+	// fails and leaves nothing behind that would make the next one succeed.
+	blocker := filepath.Join(dir, "notadir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	failing := filepath.Join(blocker, "settings.json")
+
+	// The same store, written twice: once to a path that cannot be written and
+	// once to one that can. A Store keeps its path, so the path is set directly
+	// rather than through Open - which is what makes this the same store.
+	s := &Store{path: failing, cur: Default()}
+	s.Update(func(s *Settings) { s.Gain = 0.5 })
+	if s.WriteErr() == nil {
+		t.Skip("this platform allowed a write under a file")
+	}
+
+	s.path = filepath.Join(dir, "settings.json")
+	s.Update(func(s *Settings) { s.Gain = 0.3 })
+	if s.WriteErr() != nil {
+		t.Errorf("a successful write left the earlier failure in place: %v", s.WriteErr())
+	}
+	if got := s.Current().Gain; got != 0.3 {
+		t.Errorf("gain = %v, want the later write to have been applied", got)
+	}
+}
