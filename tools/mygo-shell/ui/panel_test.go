@@ -790,7 +790,8 @@ func TestNoEnglishLeaksIntoTheChineseInterface(t *testing.T) {
 	st.Apply(engine.Event{Event: "transport_metrics", Raw: []byte(
 		`{"event":"transport_metrics","session_uptime_ms":90000,"sender_late_recoveries":0,` +
 			`"skipped_packets":0,"max_send_lateness_us":900,"members":[` +
-			`{"host":"10.0.10.31","media":{"packets_sent":500,"receiver_latency_ms":466},` +
+			`{"host":"10.0.10.31","media":{"packets_sent":500,"receiver_latency_ms":466,` +
+			`"receiver_latency_estimated":true},` +
 			`"health":{"feedback_rtt_ms":21.0}}]}`)})
 
 	view := New(Deps{
@@ -804,7 +805,7 @@ func TestNoEnglishLeaksIntoTheChineseInterface(t *testing.T) {
 	// as "HomePod", "AirPlay" and "dB" are the same in both languages.
 	english := []string{
 		"at your floor", "The engine will be asked", "Drops the window",
-		"ms now", "s ago", "target ",
+		"ms now", "s ago", "target ", "estimated",
 	}
 	for _, page := range []string{"stats", "receivers", "equalizer", "settings"} {
 		view.SetPage(page)

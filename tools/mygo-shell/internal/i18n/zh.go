@@ -151,6 +151,7 @@ var chinese = map[string]string{
 	"Ten bands from 31 Hz to 16 kHz, each moving up to 12 dB. A change is heard as it is made.": "从 31 Hz 到 16 kHz 共十段，每段最多 ±12 dB。改动会立即生效。",
 	"Target":                                 "目标",
 	"Receiver buffer":                        "接收端缓冲",
+	"Receiver buffer (estimated)":            "接收端缓冲（估算）",
 	"Network round trip":                     "网络往返",
 	"Real-time · 120 ms":                     "实时 · 120 ms",
 	"Normal · 200 ms":                        "正常 · 200 ms",

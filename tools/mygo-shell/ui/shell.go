@@ -312,9 +312,10 @@ func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engi
 // statsPage is the one thing the user opened the window to see: whether audio
 // is flowing, how far behind it is, and the counters that explain a stutter.
 //
-// It is laid out the way a system statistics window is - a headline figure,
-// then label-and-value rows separated by space rather than by cards. Cards
-// inside a window are a web idiom; a desktop window is already one surface.
+// It is laid out the way a system statistics window is: a headline figure, then
+// groups of label-and-value rows on raised surfaces. Each surface says its rows
+// belong together - the parts of the latency, the capture counters, the losses -
+// which is a question the page asks and has to answer.
 func (s *Shell) statsPage(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	ui.Column(c).FillWidth().Gap(28).Children(func() {
 		s.headline(c, p, cfg, st)
@@ -476,8 +477,8 @@ func (s *Shell) metricRow(c *ui.Context, p palette, label, value string, valueCo
 }
 
 // trend draws the latency over time against the target, so a drift away from it
-// is visible without reading numbers. It is a section of the page, not a card:
-// a label, the plot, and the scale, separated by space.
+// is visible without reading numbers: a label, the plot, and the scale. The plot
+// is its own filled surface, because it is a reading rather than a table.
 func (s *Shell) trend(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
 	target := float64(cfg.EffectiveLatencyMs(s.adapted()))
 
