@@ -584,3 +584,25 @@ func TestAClosedWindowLeavesNoViewBehind(t *testing.T) {
 		t.Error("showPage created a view after the window was closed")
 	}
 }
+
+func TestAStreamThatCouldNotStartIsNotLeftConnecting(t *testing.T) {
+	// startAttempt logs a failed StartStream and returns. Nothing else reports a
+	// phase for that attempt, so the model kept the "connecting" it was put in -
+	// a surface saying a connection is being made that never was.
+	app := &App{settings: settings.Open("/tmp/airflash-start-fail.json"), state: engine.NewState()}
+	app.state.Apply(engine.Event{Event: "phase", Raw: []byte(`{"event":"phase","phase":"connecting"}`)})
+	if got := app.state.Snapshot().Phase; got != engine.PhaseConnecting {
+		t.Fatalf("setup phase = %q, want connecting", got)
+	}
+
+	// What startAttempt does when StartStream fails.
+	app.state.Apply(engine.Event{Event: "error", Raw: []byte(
+		`{"event":"error","message":"could not start the stream"}`)})
+
+	if got := app.state.Snapshot().Phase; got != engine.PhaseFailed {
+		t.Errorf("phase = %q, want failed: the surface would keep saying connecting", got)
+	}
+	if got := app.state.LastError(); got != "could not start the stream" {
+		t.Errorf("last error = %q, want the start failure", got)
+	}
+}

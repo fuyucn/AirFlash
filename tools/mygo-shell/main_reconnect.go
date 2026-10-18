@@ -174,7 +174,14 @@ func (a *App) startAttempt(s session) {
 	a.state.ResetSession()
 
 	if _, err := client.StartStream(s.peers, opts); err != nil {
+		// The engine could not be told to start, so nothing will ever report a
+		// phase for this attempt. Leaving the model in "connecting" would show a
+		// connection that is not being made, so the failure is recorded where
+		// the surface reads it.
 		log.Printf("start failed: %v", err)
+		a.state.Apply(engine.Event{Event: "error", Raw: []byte(
+			`{"event":"error","message":"could not start the stream"}`)})
+		return
 	}
 	a.settings.Update(func(c *settings.Settings) { c.LastPeer = s.peers[0].Host })
 }
