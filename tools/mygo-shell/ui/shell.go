@@ -132,6 +132,10 @@ type manualReceiver struct {
 type Shell struct {
 	deps Deps
 	page page
+	// scroll is one place per page. A single container is reused by every page,
+	// so without this, scrolling Settings and then opening Stats shows Stats
+	// already scrolled past its title and headline.
+	scroll [4]ui.ScrollState
 	// tuning is the receiver whose own settings are open, or "" when none is.
 	// It is the window's, not the app's: it is a view state that lasts as long as
 	// the window does, like the page.
@@ -314,7 +318,11 @@ func (s *Shell) navItem(c *ui.Context, p palette, label string, target page) {
 const contentColumn = 640
 
 func (s *Shell) content(c *ui.Context, p palette, cfg settings.Settings, st engine.Metrics) {
-	body := ui.Scroll(c).Grow(1).Padding(34, 34)
+	// A new key gives each page its own scroll container. A container's state
+	// belongs to the container, not to the page drawn inside it; reusing one
+	// made Stats open at Settings' old offset.
+	body := ui.Scroll(c).Grow(1).Padding(34, 34).Key("page-" + s.Page()).
+		TrackScroll(&s.scroll[s.page])
 	body.Children(func() {
 		ui.Column(c).Width(contentColumn).Gap(0).Children(func() {
 			switch s.page {

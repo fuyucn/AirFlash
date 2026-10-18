@@ -953,6 +953,33 @@ func TestChoosingALatencyModeChangesTheSetting(t *testing.T) {
 	}
 }
 
+func TestEachPageOpensAtItsOwnTop(t *testing.T) {
+	// The window has one scroll container. Without a place of its own per page,
+	// scrolling Settings to its end and opening Stats showed Stats already
+	// scrolled: its title and headline were above the viewport.
+	view := New(Deps{
+		Words:    i18n.For(i18n.English),
+		State:    streamingState(),
+		Settings: settings.Open("/tmp/airflash-page-scroll.json"),
+		Life:     shell.New(),
+	})
+	view.SetPage("settings")
+	tester := ui.NewTester(view.View, 880, 640)
+	tester.Scroll(700, 500, 0, 10000)
+
+	view.SetPage("stats")
+	tester.Frame()
+	if r, ok := tester.Find("Live measurements from the current session."); !ok || r.Y < 0 || r.Y > 200 {
+		t.Errorf("Stats heading is at %v (found=%v), want it at the top of the new page", r, ok)
+	}
+
+	view.SetPage("settings")
+	tester.Frame()
+	if r, ok := tester.Find("Playback, network, and startup preferences."); !ok || r.Y < 0 || r.Y > 200 {
+		t.Errorf("Settings heading is at %v (found=%v), want the page's own place", r, ok)
+	}
+}
+
 func TestEverySliderHasAnAccessibleName(t *testing.T) {
 	// A slider with no Label is announced as "slider" and its value, with no
 	// word saying what it controls - on a page with ten equalizer bands that is
